@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>廠商工資試算與 Excel 核對系統</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- SheetJS for Excel Reading and Writing -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0f9ff',
+              100: '#e0f2fe',
+              500: '#0284c7',
+              600: '#0369a1',
+              700: '#075985',
+              800: '#0c4a6e',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-800 antialiased flex flex-col justify-between">
+
+  <!-- Header -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 flex items-center justify-center text-white font-bold text-xl shadow-md">
+          $
+        </div>
+        <div>
+          <h1 class="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+            廠商工資試算與 Excel 核對系統
+            <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 border border-sky-200">GitHub Pages 靜態版</span>
+          </h1>
+          <p class="text-xs text-slate-500">階梯費率試算・Excel 智慧核對・異常警示檢測・報表匯出</p>
+        </div>
+      </div>
+
+      <!-- Quick Action Buttons -->
+      <div class="flex items-center flex-wrap gap-2">
+        <button id="btn-load-demo" class="px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-300 transition flex items-center gap-1.5 shadow-sm">
+          <svg class="w-3.5 h-3.5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          載入範例數據
+        </button>
+        <button id="btn-download-template" class="px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-300 transition flex items-center gap-1.5 shadow-sm">
+          <svg class="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          下載 Excel 範本
+        </button>
+        <button id="btn-export-report" class="px-3.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition flex items-center gap-1.5 shadow-md shadow-indigo-100">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          匯出完整請款報表 (.xlsx)
+        </button>
+        <button onclick="window.print()" class="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg border border-slate-200 transition" title="列印報表">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Rate & Policy Banner -->
+  <div class="bg-gradient-to-r from-slate-900 via-sky-950 to-indigo-950 text-white py-3 px-4 shadow-inner no-print">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm">
+      <div class="flex items-center gap-2">
+        <span class="bg-sky-500/30 text-sky-300 font-semibold px-2 py-0.5 rounded border border-sky-400/30">計費標準規章</span>
+        <span class="text-slate-300">本系統套用之標準時薪階梯與稅率：</span>
+      </div>
+      <div class="flex flex-wrap items-center gap-4 text-xs font-mono">
+        <div class="flex items-center gap-1.5 bg-slate-800/80 px-2.5 py-1 rounded-md border border-slate-700">
+          <span class="text-slate-400">前 8 小時 (標準)</span>
+          <span class="text-emerald-400 font-bold">$275</span><span class="text-slate-400">/hr</span>
+        </div>
+        <div class="flex items-center gap-1.5 bg-slate-800/80 px-2.5 py-1 rounded-md border border-slate-700">
+          <span class="text-slate-400">第 9~10 小時 (後2hr)</span>
+          <span class="text-amber-400 font-bold">$280</span><span class="text-slate-400">/hr</span>
+        </div>
+        <div class="flex items-center gap-1.5 bg-slate-800/80 px-2.5 py-1 rounded-md border border-slate-700">
+          <span class="text-slate-400">超過 10 小時 (第11hr起)</span>
+          <span class="text-rose-400 font-bold">$345</span><span class="text-slate-400">/hr</span>
+        </div>
+        <div class="flex items-center gap-1.5 bg-slate-800/80 px-2.5 py-1 rounded-md border border-slate-700">
+          <span class="text-slate-400">請款營業稅</span>
+          <span class="text-purple-300 font-bold">+ 5%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full space-y-6 flex-grow">
+
+    <!-- Top KPI Cards -->
+    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <!-- Card 1: 手動試算含稅總額 -->
+      <div class="bg-white rounded-xl p-4 card-shadow border-l-4 border-sky-500">
+        <div class="flex justify-between items-start">
+          <span class="text-xs font-semibold text-slate-500 uppercase">手動試算含稅總額</span>
+          <span class="p-1.5 bg-sky-50 text-sky-600 rounded-lg">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+          </span>
+        </div>
+        <div class="mt-2 flex items-baseline gap-2">
+          <span id="kpi-manual-total" class="text-2xl font-black text-slate-900">$0</span>
+          <span class="text-xs text-slate-400">(未稅: <span id="kpi-manual-net">$0</span>)</span>
+        </div>
+        <div class="mt-1 text-xs text-slate-500 flex justify-between">
+          <span>營業稅 (5%): <span id="kpi-manual-tax" class="font-semibold text-slate-700">$0</span></span>
+          <span>總工時: <span id="kpi-manual-hours" class="font-semibold text-slate-700">0</span> hr</span>
+        </div>
+      </div>
+
+      <!-- Card 2: Excel 解析含稅總額 -->
+      <div class="bg-white rounded-xl p-4 card-shadow border-l-4 border-indigo-500">
+        <div class="flex justify-between items-start">
+          <span class="text-xs font-semibold text-slate-500 uppercase">Excel 上傳含稅總額</span>
+          <span class="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          </span>
+        </div>
+        <div class="mt-2 flex items-baseline gap-2">
+          <span id="kpi-excel-total" class="text-2xl font-black text-slate-900">$0</span>
+          <span class="text-xs text-slate-400">(未稅: <span id="kpi-excel-net">$0</span>)</span>
+        </div>
+        <div class="mt-1 text-xs text-slate-500 flex justify-between">
+          <span>讀取廠商數: <span id="kpi-excel-vendors" class="font-semibold text-slate-700">0</span> 間</span>
+          <span>總筆數: <span id="kpi-excel-rows" class="font-semibold text-slate-700">0</span> 筆</span>
+        </div>
+      </div>
+
+      <!-- Card 3: 雙方差異核對 -->
+      <div class="bg-white rounded-xl p-4 card-shadow border-l-4 border-amber-500">
+        <div class="flex justify-between items-start">
+          <span class="text-xs font-semibold text-slate-500 uppercase">試算 vs Excel 差異額</span>
+          <span class="p-1.5 bg-amber-50 text-amber-600 rounded-lg">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+          </span>
+        </div>
+        <div class="mt-2 flex items-baseline gap-2">
+          <span id="kpi-diff-amount" class="text-2xl font-black text-emerald-600">$0</span>
+          <span id="kpi-diff-status" class="text-xs px-2 py-0.5 rounded font-bold bg-emerald-100 text-emerald-700">完全相符</span>
+        </div>
+        <div class="mt-1 text-xs text-slate-500 flex justify-between">
+          <span>工時差異: <span id="kpi-diff-hours" class="font-semibold text-slate-700">0</span> hr</span>
+          <span>有差異廠商: <span id="kpi-diff-vendor-count" class="font-semibold text-slate-700">0</span> 間</span>
+        </div>
+      </div>
+
+      <!-- Card 4: 異常時薪/工時警示 -->
+      <div class="bg-white rounded-xl p-4 card-shadow border-l-4 border-rose-500">
+        <div class="flex justify-between items-start">
+          <span class="text-xs font-semibold text-slate-500 uppercase">異常時薪與工時警示</span>
+          <span class="p-1.5 bg-rose-50 text-rose-600 rounded-lg">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+          </span>
+        </div>
+        <div class="mt-2 flex items-baseline gap-2">
+          <span id="kpi-anomaly-count" class="text-2xl font-black text-slate-800">0</span>
+          <span class="text-xs text-slate-500">筆待確認異常</span>
+        </div>
+        <div class="mt-1 text-xs text-slate-500 flex justify-between">
+          <span>時薪異常: <span id="kpi-rate-anomalies" class="font-semibold text-rose-600">0</span> 筆</span>
+          <span>工時異常: <span id="kpi-hour-anomalies" class="font-semibold text-amber-600">0</span> 筆</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Navigation Tabs -->
+    <div class="flex border-b border-slate-200 space-x-2 sm:space-x-4 no-print overflow-x-auto">
+      <button class="tab-btn px-4 py-2.5 text-sm font-semibold border-b-2 border-sky-600 text-sky-600 transition whitespace-nowrap" data-tab="tab-manual">
+        功能 1：手動輸入試算表
+      </button>
+      <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 transition whitespace-nowrap" data-tab="tab-excel">
+        功能 2：上傳 Excel 資料核對
+      </button>
+      <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 transition whitespace-nowrap" data-tab="tab-reconciliation">
+        核對比對與差異分析 (Diff)
+      </button>
+      <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 transition whitespace-nowrap" data-tab="tab-anomalies">
+        異常警示清單
+        <span id="tab-anomaly-badge" class="ml-1.5 hidden px-1.5 py-0.2 text-xs font-bold rounded-full bg-rose-500 text-white">0</span>
+      </button>
+    </div>
+
+    <!-- TAB 1: 手動輸入試算 -->
+    <section id="tab-manual" class="tab-content space-y-4">
+      <div class="bg-white rounded-xl card-shadow p-5">
+        <div class="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
+          <div>
+            <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
+              <span class="w-2 h-5 bg-sky-500 rounded-full inline-block"></span>
+              8 間預設廠商工資試算填寫區
+            </h2>
+            <p class="text-xs text-slate-500 mt-0.5">可輸入每間廠商之出工人數、標準工時（8hr以內）、加班工時（9-10hr / >10hr）與額外費用，系統自動即時結算。</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="btn-add-vendor" class="px-3 py-1.5 text-xs font-medium text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg border border-sky-200 transition flex items-center gap-1">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+              新增自訂廠商
+            </button>
+            <button id="btn-reset-manual" class="px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition">
+              清空重填
+            </button>
+          </div>
+        </div>
+
+        <!-- Manual Input Table -->
+        <div class="overflow-x-auto mt-4">
+          <table class="w-full text-xs text-left border-collapse">
+            <thead>
+              <tr class="bg-slate-100/80 text-slate-700 font-semibold border-b border-slate-200">
+                <th class="p-3 w-12 text-center">序號</th>
+                <th class="p-3 min-w-[120px]">廠商名稱</th>
+                <th class="p-3 min-w-[90px] text-right">出工人數</th>
+                <th class="p-3 min-w-[110px] text-right bg-emerald-50/50">標準工時<br><span class="text-[10px] font-normal text-emerald-700 font-mono">(≤8h @$275)</span></th>
+                <th class="p-3 min-w-[110px] text-right bg-amber-50/50">加班工時 1<br><span class="text-[10px] font-normal text-amber-700 font-mono">(9-10h @$280)</span></th>
+                <th class="p-3 min-w-[110px] text-right bg-rose-50/50">加班工時 2<br><span class="text-[10px] font-normal text-rose-700 font-mono">(>10h @$345)</span></th>
+                <th class="p-3 min-w-[100px] text-right">額外費用 ($)</th>
+                <th class="p-3 min-w-[110px] text-right bg-slate-50 font-bold">未稅請款小計</th>
+                <th class="p-3 min-w-[90px] text-right text-slate-500">5% 營業稅</th>
+                <th class="p-3 min-w-[120px] text-right bg-sky-50/80 font-black text-sky-900">含稅總計 ($)</th>
+                <th class="p-3 w-16 text-center">操作</th>
+              </tr>
+            </thead>
+            <tbody id="manual-vendor-tbody" class="divide-y divide-slate-100">
+              <!-- Rendered via JS -->
+            </tbody>
+            <tfoot class="bg-slate-900 text-white font-semibold">
+              <tr>
+                <td colspan="2" class="p-3 text-center font-bold">合計總額</td>
+                <td id="foot-manual-headcount" class="p-3 text-right font-mono">0</td>
+                <td id="foot-manual-h1" class="p-3 text-right font-mono text-emerald-300">0</td>
+                <td id="foot-manual-h2" class="p-3 text-right font-mono text-amber-300">0</td>
+                <td id="foot-manual-h3" class="p-3 text-right font-mono text-rose-300">0</td>
+                <td id="foot-manual-extra" class="p-3 text-right font-mono">$0</td>
+                <td id="foot-manual-net" class="p-3 text-right font-mono text-lg font-bold text-amber-300">$0</td>
+                <td id="foot-manual-tax" class="p-3 text-right font-mono text-slate-300">$0</td>
+                <td id="foot-manual-gross" class="p-3 text-right font-mono text-xl font-black text-sky-300">$0</td>
+                <td class="p-3 text-center">-</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: 上傳 Excel 資料核對 -->
+    <section id="tab-excel" class="tab-content hidden space-y-4">
+      <!-- Upload Drop Zone -->
+      <div class="bg-white rounded-xl card-shadow p-6">
+        <div class="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
+          <div>
+            <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
+              <span class="w-2 h-5 bg-indigo-500 rounded-full inline-block"></span>
+              上傳廠商請款 / 工時 Excel 檔案 (.xlsx, .xls)
+            </h2>
+            <p class="text-xs text-slate-500 mt-0.5">系統將自動讀取二進位資料，解析廠商、工時與時薪，自動加總分類並檢查異常。</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="btn-download-template-2" class="px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-300 transition flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+              下載標準範本檔
+            </button>
+          </div>
+        </div>
+
+        <!-- Drag & Drop Area -->
+        <div id="drop-zone" class="mt-4 border-2 border-dashed border-slate-300 hover:border-indigo-500 rounded-2xl p-8 text-center bg-slate-50/50 hover:bg-indigo-50/30 transition cursor-pointer">
+          <input type="file" id="excel-file-input" accept=".xlsx, .xls, .csv" class="hidden">
+          <div class="flex flex-col items-center justify-center space-y-3">
+            <div class="w-14 h-14 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-inner">
+              <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+            </div>
+            <div>
+              <p class="text-sm font-semibold text-slate-800">點擊選擇檔案 或 將 .xlsx / .xls 檔案拖曳至此處</p>
+              <p class="text-xs text-slate-500 mt-1">支援各類廠商請款明細表、日誌報表，瀏覽器本地安全解析不外傳</p>
+            </div>
+            <div id="file-info-badge" class="hidden text-xs px-3 py-1 bg-indigo-600 text-white rounded-full font-mono flex items-center gap-1.5">
+              <span>已載入檔案：</span><span id="loaded-file-name" class="font-bold"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Excel Parsed Summary by Vendor -->
+        <div id="excel-summary-container" class="mt-6 hidden">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+              <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+              Excel 檔案廠商分類匯總表 (含階梯薪資驗證與 5% 稅額)
+            </h3>
+            <span class="text-xs text-slate-500">共解析 <span id="excel-total-records" class="font-bold text-slate-800">0</span> 筆資料</span>
+          </div>
+
+          <div class="overflow-x-auto border border-slate-200 rounded-xl">
+            <table class="w-full text-xs text-left border-collapse">
+              <thead>
+                <tr class="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200">
+                  <th class="p-3">廠商名稱</th>
+                  <th class="p-3 text-right">出工筆數</th>
+                  <th class="p-3 text-right">總工時 (hr)</th>
+                  <th class="p-3 text-right">前8hr工時</th>
+                  <th class="p-3 text-right">9-10hr加班</th>
+                  <th class="p-3 text-right">&gt;10hr加班</th>
+                  <th class="p-3 text-right">額外費用</th>
+                  <th class="p-3 text-right bg-slate-50 font-bold">檔案未稅小計</th>
+                  <th class="p-3 text-right">5% 營業稅</th>
+                  <th class="p-3 text-right bg-indigo-50/80 font-black text-indigo-900">含稅總額 ($)</th>
+                  <th class="p-3 text-center">狀態檢核</th>
+                </tr>
+              </thead>
+              <tbody id="excel-vendor-tbody" class="divide-y divide-slate-100 bg-white">
+                <!-- Rendered via JS -->
+              </tbody>
+              <tfoot class="bg-slate-800 text-white font-semibold">
+                <tr>
+                  <td class="p-3 font-bold">總計合計</td>
+                  <td id="foot-excel-rows" class="p-3 text-right font-mono">0</td>
+                  <td id="foot-excel-hours" class="p-3 text-right font-mono text-sky-300">0</td>
+                  <td id="foot-excel-h1" class="p-3 text-right font-mono">0</td>
+                  <td id="foot-excel-h2" class="p-3 text-right font-mono">0</td>
+                  <td id="foot-excel-h3" class="p-3 text-right font-mono">0</td>
+                  <td id="foot-excel-extra" class="p-3 text-right font-mono">$0</td>
+                  <td id="foot-excel-net" class="p-3 text-right font-mono text-amber-300 font-bold text-base">$0</td>
+                  <td id="foot-excel-tax" class="p-3 text-right font-mono text-slate-300">$0</td>
+                  <td id="foot-excel-gross" class="p-3 text-right font-mono text-indigo-300 font-black text-lg">$0</td>
+                  <td class="p-3 text-center">-</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <!-- Raw Rows Viewer with Filter -->
+          <div class="mt-6 pt-4 border-t border-slate-200">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+              <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider">Excel 原始工單明細表</h4>
+              <div class="flex items-center gap-2">
+                <input type="text" id="raw-search" placeholder="搜尋廠商、姓名或備註..." class="text-xs px-3 py-1.5 rounded-lg border border-slate-300 w-48">
+                <select id="raw-filter-vendor" class="text-xs px-2 py-1.5 rounded-lg border border-slate-300 text-slate-700">
+                  <option value="ALL">全部廠商</option>
+                </select>
+              </div>
+            </div>
+            <div class="max-h-80 overflow-y-auto border border-slate-200 rounded-xl">
+              <table class="w-full text-xs text-left border-collapse">
+                <thead class="sticky top-0 bg-slate-100 text-slate-700 border-b border-slate-200">
+                  <tr>
+                    <th class="p-2.5 text-center w-12">#</th>
+                    <th class="p-2.5">廠商名稱</th>
+                    <th class="p-2.5">日期/工單</th>
+                    <th class="p-2.5">人員/姓名</th>
+                    <th class="p-2.5 text-right">申報工時</th>
+                    <th class="p-2.5 text-right">申報時薪</th>
+                    <th class="p-2.5 text-right">額外費用</th>
+                    <th class="p-2.5 text-right">申報金額</th>
+                    <th class="p-2.5 text-right bg-slate-200/50">階梯標準算額</th>
+                    <th class="p-2.5 text-center">檢核結果</th>
+                  </tr>
+                </thead>
+                <tbody id="raw-rows-tbody" class="divide-y divide-slate-100 bg-white">
+                  <!-- Rendered via JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: 核對比對與差異分析 (Diff) -->
+    <section id="tab-reconciliation" class="tab-content hidden space-y-4">
+      <div class="bg-white rounded-xl card-shadow p-5">
+        <div class="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
+          <div>
+            <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
+              <span class="w-2 h-5 bg-amber-500 rounded-full inline-block"></span>
+              手動試算 vs Excel 檔案 雙向對帳與差異比對
+            </h2>
+            <p class="text-xs text-slate-500 mt-0.5">系統自動交叉比對兩邊的工時、未稅請款與含稅金額，精準標記出短少、多報或吻合項目。</p>
+          </div>
+          <button id="btn-sync-to-export" class="px-3.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition shadow-sm">
+            匯出此差異對帳表
+          </button>
+        </div>
+
+        <div class="overflow-x-auto mt-4 border border-slate-200 rounded-xl">
+          <table class="w-full text-xs text-left border-collapse">
+            <thead>
+              <tr class="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200">
+                <th class="p-3 min-w-[120px]">廠商名稱</th>
+                <th class="p-3 text-right bg-sky-50/50">手動總工時</th>
+                <th class="p-3 text-right bg-indigo-50/50">Excel總工時</th>
+                <th class="p-3 text-right">工時差 (hr)</th>
+                <th class="p-3 text-right bg-sky-50/50">手動未稅 ($)</th>
+                <th class="p-3 text-right bg-indigo-50/50">Excel未稅 ($)</th>
+                <th class="p-3 text-right font-bold">未稅差異 (Diff)</th>
+                <th class="p-3 text-right bg-sky-50/50 font-bold">手動含稅總額</th>
+                <th class="p-3 text-right bg-indigo-50/50 font-bold">Excel含稅總額</th>
+                <th class="p-3 text-right font-black">含稅差異 (Diff)</th>
+                <th class="p-3 text-center min-w-[100px]">核對狀態</th>
+              </tr>
+            </thead>
+            <tbody id="diff-tbody" class="divide-y divide-slate-100 bg-white">
+              <!-- Rendered via JS -->
+            </tbody>
+            <tfoot class="bg-slate-900 text-white font-semibold">
+              <tr>
+                <td class="p-3 font-bold">全廠商總計</td>
+                <td id="foot-diff-man-hours" class="p-3 text-right font-mono text-sky-300">0</td>
+                <td id="foot-diff-xls-hours" class="p-3 text-right font-mono text-indigo-300">0</td>
+                <td id="foot-diff-hrs-diff" class="p-3 text-right font-mono">0</td>
+                <td id="foot-diff-man-net" class="p-3 text-right font-mono text-sky-300">$0</td>
+                <td id="foot-diff-xls-net" class="p-3 text-right font-mono text-indigo-300">$0</td>
+                <td id="foot-diff-net-diff" class="p-3 text-right font-mono text-amber-300 font-bold">$0</td>
+                <td id="foot-diff-man-gross" class="p-3 text-right font-mono text-sky-300 font-bold">$0</td>
+                <td id="foot-diff-xls-gross" class="p-3 text-right font-mono text-indigo-300 font-bold">$0</td>
+                <td id="foot-diff-gross-diff" class="p-3 text-right font-mono text-amber-300 font-black text-base">$0</td>
+                <td id="foot-diff-status" class="p-3 text-center">-</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: 異常警示清單 -->
+    <section id="tab-anomalies" class="tab-content hidden space-y-4">
+      <div class="bg-white rounded-xl card-shadow p-5">
+        <div class="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
+          <div>
+            <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
+              <span class="w-2 h-5 bg-rose-500 rounded-full inline-block"></span>
+              異常時薪與工時警示專區
+            </h2>
+            <p class="text-xs text-slate-500 mt-0.5">系統自動篩選出不符合 8h($275)/後2h($280)/&gt;10h($345) 階梯標準、工時超標或算式異常的工單。</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="anomaly-filter-tag" class="text-xs px-2.5 py-1 rounded-full bg-rose-100 text-rose-700 font-semibold">
+              待處理異常：<span id="anomaly-view-count">0</span> 件
+            </span>
+          </div>
+        </div>
+
+        <div id="anomaly-empty-state" class="p-12 text-center">
+          <div class="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-3">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          </div>
+          <h3 class="text-sm font-bold text-slate-800">目前無任何異常記錄</h3>
+          <p class="text-xs text-slate-500 mt-1">請先上傳 Excel 檔案或點擊上方「載入範例數據」進行檢測。</p>
+        </div>
+
+        <div id="anomaly-table-container" class="hidden overflow-x-auto mt-4 border border-rose-200 rounded-xl">
+          <table class="w-full text-xs text-left border-collapse">
+            <thead>
+              <tr class="bg-rose-50/70 text-rose-900 font-semibold border-b border-rose-200">
+                <th class="p-3 w-12 text-center">行號</th>
+                <th class="p-3">廠商名稱</th>
+                <th class="p-3">人員/日期</th>
+                <th class="p-3 text-right">申報工時</th>
+                <th class="p-3 text-right">申報時薪</th>
+                <th class="p-3 text-right">申報金額</th>
+                <th class="p-3 text-right bg-white/60">依階梯標準應為</th>
+                <th class="p-3 min-w-[200px]">異常判定說明</th>
+                <th class="p-3 text-center">風險等級</th>
+              </tr>
+            </thead>
+            <tbody id="anomaly-tbody" class="divide-y divide-rose-100 bg-white">
+              <!-- Rendered via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="bg-white border-t border-slate-200 py-4 mt-8 no-print">
+    <div class="max-w-7xl mx-auto px-4 text-center text-xs text-slate-500 space-y-1">
+      <p>廠商工資試算與 Excel 核對系統 &copy; 2026. 純前端無後端架構，可直接部署至 GitHub Pages 免費使用。</p>
+      <p class="text-slate-400">標準階梯：8hr 內 $275/hr ｜ 9-10hr $280/hr ｜ &gt;10hr $345/hr ｜ 營業稅 5%</p>
+    </div>
+  </footer>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="fixed bottom-5 right-5 z-50 transform translate-y-20 opacity-0 transition duration-300 ease-in-out pointer-events-none">
+    <div id="toast-content" class="px-4 py-3 rounded-xl shadow-lg text-xs font-semibold flex items-center gap-2 bg-slate-900 text-white">
+      <span id="toast-icon"></span>
+      <span id="toast-message">訊息通知</span>
+    </div>
+  </div>
+
+  <!-- Custom Scripts -->
+  <script src="app.js"></script>
+</body>
+</html>

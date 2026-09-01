@@ -1042,6 +1042,43 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // 模式切換：本機上傳 vs Google 試算表
+  const modeBtnFile = document.getElementById('mode-btn-file');
+  const modeBtnGsheet = document.getElementById('mode-btn-gsheet');
+  const fileUploadSec = document.getElementById('file-upload-section');
+  const gsheetSyncSec = document.getElementById('gsheet-sync-section');
+
+  if (modeBtnFile && modeBtnGsheet) {
+    modeBtnFile.addEventListener('click', () => {
+      modeBtnFile.className = 'px-3.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white shadow-sm transition flex items-center gap-1.5';
+      modeBtnGsheet.className = 'px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center gap-1.5';
+      fileUploadSec?.classList.remove('hidden');
+      gsheetSyncSec?.classList.add('hidden');
+    });
+
+    modeBtnGsheet.addEventListener('click', () => {
+      modeBtnGsheet.className = 'px-3.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white shadow-sm transition flex items-center gap-1.5';
+      modeBtnFile.className = 'px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center gap-1.5';
+      gsheetSyncSec?.classList.remove('hidden');
+      fileUploadSec?.classList.add('hidden');
+    });
+  }
+
+  // Google 試算表連線同步按鈕
+  document.getElementById('btn-sync-gsheet')?.addEventListener('click', () => {
+    const url = document.getElementById('gsheet-url-input')?.value?.trim();
+    if (url) handleGoogleSheetSync(url);
+    else showToast('請先貼上 Google 試算表連結！', 'error');
+  });
+
+  document.getElementById('gsheet-url-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const url = e.target.value.trim();
+      if (url) handleGoogleSheetSync(url);
+      else showToast('請先貼上 Google 試算表連結！', 'error');
+    }
+  });
+
   // 原始明細過濾器
   document.getElementById('raw-filter-vendor')?.addEventListener('change', renderRawRows);
   document.getElementById('raw-search')?.addEventListener('input', renderRawRows);
@@ -1053,3 +1090,46 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-export-report')?.addEventListener('click', exportPayrollReport);
   document.getElementById('btn-sync-to-export')?.addEventListener('click', exportPayrollReport);
 });
+
+// Google 試算表線上讀取邏輯
+async function handleGoogleSheetSync(url) {
+  if (!url) return;
+
+  const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!match || !match[1]) {
+    showToast('無效的 Google 試算表網址，請確認包含 /spreadsheets/d/...', 'error');
+    return;
+  }
+
+  const sheetId = match[1];
+  showToast('正在連線 Google 試算表讀取資料...', 'info');
+
+  try {
+    const gvizUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv`;
+    const res = await fetch(gvizUrl);
+
+    if (!res.ok) {
+      throw new Error(`連線失敗 (HTTP ${res.status})，請確認試算表共用設定為「知道連結的人都能檢視」！`);
+    }
+
+    const csvText = await res.text();
+    if (!csvText || csvText.includes('<!DOCTYPE html>') || csvText.includes('accounts.google.com')) {
+      throw new Error('無法讀取內容，請確認 Google 試算表已開啟「知道連結的使用者都能檢視」！');
+    }
+
+    state.fileName = 'Google 雲端試算表';
+    document.getElementById('loaded-file-name').textContent = 'Google 雲端試算表 (線上同步)';
+    document.getElementById('file-info-badge').classList.remove('hidden');
+
+    const workbook = XLSX.read(csvText, { type: 'string' });
+    const firstSheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[firstSheetName];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+    parseExcelData(jsonData);
+    showToast('已成功從 Google 試算表同步讀取並完成核對！', 'success');
+  } catch (err) {
+    console.error('Google Sheet 讀取錯誤:', err);
+    showToast(err.message || '讀取失敗，請確認 Google 試算表共用設定！', 'error');
+  }
+}

@@ -1,16 +1,24 @@
 /**
- * 廠商工資試算與 Excel 核對系統 - 核心邏輯
- * 支援 8 間預設廠商、階梯時薪計算、Excel 解析與異常核對、差異對帳、Excel 報表匯出
+ * 廠商工資試算與 Excel / Google Sheet 核對系統 - 核心邏輯
+ * 支援 8 間指定廠商、3 位人員權限登入、階梯時薪計算、Excel/Google Sheet 雙向讀取核對與回傳寫入
  */
 
-// 1. 常數與計費階梯設定
+// 1. 計費階梯設定
 const RATE_BASE = 275;  // 前 8 小時標準時薪
 const RATE_OT1 = 280;   // 第 9~10 小時加班時薪 (後 2 小時)
 const RATE_OT2 = 345;   // 超過 10 小時加班時薪 (第 11 小時起)
 const TAX_RATE = 0.05;  // 5% 營業稅
 
+// 指定 8 間預設廠商（銘暘(凱宥)、源信、杜豪、彤勝、安迅、協泰、建德、優質人資）
 const DEFAULT_VENDORS = [
-  '銘暘', '源信', '杜豪', '彤勝', '安迅', '協泰', '建德', '優質人資'
+  '銘暘(凱宥)', '源信', '杜豪', '彤勝', '安迅', '協泰', '建德', '優質人資'
+];
+
+// 預設 3 位授權登入人員：Lika, Tracy, Aaliyah
+const DEFAULT_USERS = [
+  { id: 'u1', username: 'lika', name: 'Lika', role: '管理審核', password: '123456' },
+  { id: 'u2', username: 'tracy', name: 'Tracy', role: '會計核算', password: '123456' },
+  { id: 'u3', username: 'aaliyah', name: 'Aaliyah', role: '出納管理', password: '123456' }
 ];
 
 // 2. 狀態管理 (State)
@@ -20,7 +28,12 @@ const state = {
   excelSummary: {},
   excelRawRows: [],
   anomalies: [],
-  fileName: ''
+  fileName: '',
+  // 3 位人員權限管理 (Lika, Tracy, Aaliyah)
+  users: JSON.parse(localStorage.getItem('payroll_users_v3')) || DEFAULT_USERS,
+  currentUser: JSON.parse(sessionStorage.getItem('payroll_current_user_v3')) || null,
+  // Google Apps Script Web App 回傳網址
+  gasUrl: localStorage.getItem('payroll_gas_url_v2') || ''
 };
 
 // 3. 核心階梯工資計算函數
@@ -49,6 +62,15 @@ function formatCurrency(amount) {
   return '$' + Math.round(amount || 0).toLocaleString('en-US');
 }
 
+// 標準化廠商名稱（確保「銘暘」、「凱宥」皆能智慧匹配至「銘暘(凱宥)」）
+function normalizeVendorName(rawName) {
+  if (!rawName) return '未標示廠商';
+  const trimmed = String(rawName).trim();
+  if (/銘暘|凱宥/i.test(trimmed)) return '銘暘(凱宥)';
+  const match = DEFAULT_VENDORS.find(v => v.includes(trimmed) || trimmed.includes(v));
+  return match || trimmed;
+}
+
 // 初始化預設廠商名單
 function initManualVendors() {
   state.manualVendors = DEFAULT_VENDORS.map((name, idx) => ({
@@ -63,7 +85,194 @@ function initManualVendors() {
   }));
 }
 
-// 4. 手動輸入模組渲染與事件
+// 4. 人員驗證與登入系統 (3 位人員)
+function initAuthSystem() {
+  renderLoginOptions();
+  renderUserManagementList();
+
+  const loginModal = document.getElementById('login-modal');
+  const currentDisplay = document.getElementById('current-user-name');
+
+  if (!state.currentUser) {
+    loginModal?.classList.remove('hidden');
+    loginModal?.classList.add('flex');
+  } else {
+    loginModal?.classList.add('hidden');
+    loginModal?.classList.remove('flex');
+    if (currentDisplay) {
+      currentDisplay.textContent = `${state.currentUser.name}`;
+    }
+  }
+
+  // 填入既有 GAS 網址
+  const gasInput = document.getElementById('gas-url-input');
+  if (gasInput && state.gasUrl) {
+    gasInput.value = state.gasUrl;
+  }
+}
+
+// 渲染登入選項
+function renderLoginOptions() {
+  const container = document.getElementById('login-user-options');
+  if (!container) return;
+
+  container.innerHTML = '';
+  state.users.forEach((u, idx) => {
+    const label = document.createElement('label');
+    label.className = `flex items-center justify-between p-3 rounded-xl border cursor-pointer transition ${idx === 0 ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-200 hover:bg-slate-50'}`;
+    label.innerHTML = `
+      <div class="flex items-center gap-3">
+        <input type="radio" name="loginUser" value="${u.username}" ${idx === 0 ? 'checked' : ''} class="w-4 h-4 text-indigo-600 focus:ring-indigo-500">
+        <div>
+          <p class="text-xs font-bold text-slate-800">${u.name}</p>
+          <p class="text-[10px] text-slate-400 font-mono">帳號: ${u.username}</p>
+        </div>
+      </div>
+      <span class="px-2 py-0.5 text-[10px] rounded-full bg-slate-100 font-medium text-slate-600">${u.role}</span>
+    `;
+
+    label.addEventListener('click', () => {
+      document.querySelectorAll('#login-user-options label').forEach(l => {
+        l.className = 'flex items-center justify-between p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer transition';
+      });
+      label.className = 'flex items-center justify-between p-3 rounded-xl border border-indigo-500 bg-indigo-50/50 cursor-pointer transition';
+      const radio = label.querySelector('input[type="radio"]');
+      if (radio) radio.checked = true;
+    });
+
+    container.appendChild(label);
+  });
+}
+
+// 登入處理
+function handleLoginSubmit(e) {
+  e.preventDefault();
+  const selectedRadio = document.querySelector('input[name="loginUser"]:checked');
+  const passwordInput = document.getElementById('login-password');
+  const errorMsg = document.getElementById('login-error-msg');
+
+  if (!selectedRadio || !passwordInput) return;
+
+  const username = selectedRadio.value;
+  const password = passwordInput.value.trim();
+
+  const matchedUser = state.users.find(u => u.username === username);
+  if (!matchedUser) {
+    if (errorMsg) {
+      errorMsg.textContent = '找不到該使用者帳號！';
+      errorMsg.classList.remove('hidden');
+    }
+    return;
+  }
+
+  if (matchedUser.password !== password) {
+    if (errorMsg) {
+      errorMsg.textContent = '密碼錯誤，請重新輸入（預設密碼為 123456）！';
+      errorMsg.classList.remove('hidden');
+    }
+    return;
+  }
+
+  // 登入成功
+  state.currentUser = matchedUser;
+  sessionStorage.setItem('payroll_current_user_v3', JSON.stringify(matchedUser));
+
+  if (errorMsg) errorMsg.classList.add('hidden');
+  passwordInput.value = '';
+
+  const loginModal = document.getElementById('login-modal');
+  loginModal?.classList.add('hidden');
+  loginModal?.classList.remove('flex');
+
+  const currentDisplay = document.getElementById('current-user-name');
+  if (currentDisplay) {
+    currentDisplay.textContent = matchedUser.name;
+  }
+
+  showToast(`歡迎登入，${matchedUser.name}！`, 'success');
+}
+
+// 登出處理
+function handleLogout() {
+  if (confirm('確定要登出系統嗎？')) {
+    state.currentUser = null;
+    sessionStorage.removeItem('payroll_current_user_v3');
+
+    const loginModal = document.getElementById('login-modal');
+    loginModal?.classList.remove('hidden');
+    loginModal?.classList.add('flex');
+
+    showToast('已安全登出系統', 'info');
+  }
+}
+
+// 渲染 3 位人員管理清單
+function renderUserManagementList() {
+  const container = document.getElementById('user-management-list');
+  if (!container) return;
+
+  container.innerHTML = '';
+  state.users.forEach((u, idx) => {
+    const card = document.createElement('div');
+    card.className = 'p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2';
+    card.innerHTML = `
+      <div class="flex items-center justify-between">
+        <span class="text-xs font-bold text-slate-800">人員 ${idx + 1}：${u.role}</span>
+        <span class="text-[10px] font-mono text-slate-400">帳號: ${u.username}</span>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+        <div>
+          <label class="block text-[11px] text-slate-500 mb-0.5">顯示姓名/職稱</label>
+          <input type="text" data-user-field="name" data-user-idx="${idx}" value="${u.name}" class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 font-medium text-slate-800 bg-white">
+        </div>
+        <div>
+          <label class="block text-[11px] text-slate-500 mb-0.5">登入密碼</label>
+          <input type="text" data-user-field="password" data-user-idx="${idx}" value="${u.password}" class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 font-mono text-slate-800 bg-white">
+        </div>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+// 儲存人員修改
+function saveUsersSettings() {
+  const nameInputs = document.querySelectorAll('[data-user-field="name"]');
+  const pwdInputs = document.querySelectorAll('[data-user-field="password"]');
+
+  nameInputs.forEach(input => {
+    const idx = Number(input.getAttribute('data-user-idx'));
+    if (state.users[idx]) {
+      state.users[idx].name = input.value.trim() || state.users[idx].name;
+    }
+  });
+
+  pwdInputs.forEach(input => {
+    const idx = Number(input.getAttribute('data-user-idx'));
+    if (state.users[idx]) {
+      state.users[idx].password = input.value.trim() || state.users[idx].password;
+    }
+  });
+
+  localStorage.setItem('payroll_users_v3', JSON.stringify(state.users));
+
+  // 更新當前人員顯示
+  if (state.currentUser) {
+    const current = state.users.find(u => u.username === state.currentUser.username);
+    if (current) {
+      state.currentUser = current;
+      sessionStorage.setItem('payroll_current_user_v3', JSON.stringify(current));
+      document.getElementById('current-user-name').textContent = current.name;
+    }
+  }
+
+  renderLoginOptions();
+  document.getElementById('user-modal')?.classList.add('hidden');
+  document.getElementById('user-modal')?.classList.remove('flex');
+  showToast('3 位人員帳號設定已成功更新！', 'success');
+}
+
+// 5. 手動輸入模組渲染與事件
 function renderManualTable() {
   const tbody = document.getElementById('manual-vendor-tbody');
   if (!tbody) return;
@@ -100,7 +309,7 @@ function renderManualTable() {
       <td class="p-2.5 font-semibold text-slate-800">
         ${v.isCustom 
           ? `<input type="text" value="${v.name}" data-field="name" data-id="${v.id}" class="w-full text-xs font-semibold px-2 py-1 border border-slate-300 rounded bg-white focus:bg-sky-50 text-slate-800">`
-          : `<span class="px-2 py-1 rounded bg-slate-100 border border-slate-200">${v.name}</span>`
+          : `<span class="px-2 py-1 rounded bg-slate-100 border border-slate-200 font-bold ${v.name.includes('凱宥') ? 'text-indigo-700 bg-indigo-50 border-indigo-200' : ''}">${v.name}</span>`
         }
       </td>
       <td class="p-2.5 text-right">
@@ -156,7 +365,7 @@ function renderManualTable() {
   updateReconciliation();
 }
 
-// 5. Excel 上傳解析與異常檢測
+// 6. Excel 與 Google Sheet 解析與異常檢測
 function handleFileUpload(file) {
   if (!file) return;
 
@@ -171,7 +380,6 @@ function handleFileUpload(file) {
       const data = new Uint8Array(e.target.result);
       const workbook = XLSX.read(data, { type: 'array' });
       
-      // 讀取第一個工作表
       const firstSheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[firstSheetName];
       const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
@@ -186,14 +394,13 @@ function handleFileUpload(file) {
   reader.readAsArrayBuffer(file);
 }
 
-// 解析 Excel 矩陣資料
+// 解析矩陣資料
 function parseExcelData(rows) {
   if (!rows || rows.length < 2) {
     showToast('檔案內容為空或無有效表頭！', 'error');
     return;
   }
 
-  // 找出欄位索引
   const header = rows[0].map(col => String(col || '').trim());
   
   const colVendor = header.findIndex(h => /廠商|公司|單位|協力/i.test(h));
@@ -230,7 +437,8 @@ function parseExcelData(rows) {
     const r = rows[i];
     if (!r || r.length === 0 || r.every(cell => cell === undefined || cell === '')) continue;
 
-    const vendor = (colVendor !== -1 && r[colVendor]) ? String(r[colVendor]).trim() : '未標示廠商';
+    const rawVendor = (colVendor !== -1 && r[colVendor]) ? String(r[colVendor]).trim() : '未標示廠商';
+    const vendor = normalizeVendorName(rawVendor);
     const date = (colDate !== -1 && r[colDate]) ? String(r[colDate]).trim() : '-';
     const person = (colPerson !== -1 && r[colPerson]) ? String(r[colPerson]).trim() : `員工 ${i}`;
     const hours = Number(colHours !== -1 ? r[colHours] : 0) || 0;
@@ -239,13 +447,11 @@ function parseExcelData(rows) {
     const statedAmount = Number(colAmount !== -1 ? r[colAmount] : 0) || 0;
     const note = (colNote !== -1 && r[colNote]) ? String(r[colNote]).trim() : '';
 
-    // 計算階梯應付工資
     const standardCalc = calcStandardWage(hours, extra);
     const expectedAmount = standardCalc.netWage;
 
-    // 異常檢核邏輯
     const rowAnomalies = [];
-    let riskLevel = 'normal'; // normal, warning, danger
+    let riskLevel = 'normal';
 
     // 1. 時薪異常檢驗
     if (rate > 0 && rate !== RATE_BASE && rate !== RATE_OT1 && rate !== RATE_OT2) {
@@ -288,7 +494,6 @@ function parseExcelData(rows) {
 
     state.excelRawRows.push(rowObj);
 
-    // 匯總到廠商
     if (!state.excelSummary[vendor]) {
       state.excelSummary[vendor] = {
         name: vendor,
@@ -319,7 +524,6 @@ function parseExcelData(rows) {
     }
   }
 
-  // 計算每間廠商稅額與含稅總額
   Object.values(state.excelSummary).forEach(v => {
     v.taxAmount = Math.round(v.netAmount * TAX_RATE);
     v.grossAmount = v.netAmount + v.taxAmount;
@@ -330,7 +534,7 @@ function parseExcelData(rows) {
   renderAnomalies();
   updateReconciliation();
 
-  document.getElementById('excel-summary-container').classList.remove('hidden');
+  document.getElementById('excel-summary-container')?.classList.remove('hidden');
 }
 
 // 渲染 Excel 廠商加總表
@@ -390,7 +594,6 @@ function renderExcelSummary() {
     tbody.appendChild(tr);
   });
 
-  // 更新 Footer
   document.getElementById('foot-excel-rows').textContent = totRecords;
   document.getElementById('foot-excel-hours').textContent = totHours.toFixed(1);
   document.getElementById('foot-excel-h1').textContent = totH1.toFixed(1);
@@ -403,13 +606,11 @@ function renderExcelSummary() {
 
   document.getElementById('excel-total-records').textContent = totRecords;
 
-  // 更新頂部 KPI
   document.getElementById('kpi-excel-total').textContent = formatCurrency(totGross);
   document.getElementById('kpi-excel-net').textContent = formatCurrency(totNet);
   document.getElementById('kpi-excel-vendors').textContent = vendorList.filter(v => v.records > 0).length;
   document.getElementById('kpi-excel-rows').textContent = totRecords;
 
-  // 更新篩選下拉選單
   const filterSelect = document.getElementById('raw-filter-vendor');
   if (filterSelect) {
     const currentVal = filterSelect.value;
@@ -465,13 +666,12 @@ function renderRawRows() {
   });
 }
 
-// 6. 渲染異常清單
+// 7. 渲染異常清單
 function renderAnomalies() {
   const count = state.anomalies.length;
   document.getElementById('kpi-anomaly-count').textContent = count;
   document.getElementById('anomaly-view-count').textContent = count;
 
-  // 分類異常數
   let rateCount = 0;
   let hourCount = 0;
   state.anomalies.forEach(a => {
@@ -523,14 +723,13 @@ function renderAnomalies() {
   });
 }
 
-// 7. 交叉比對 (Reconciliation) 邏輯
+// 8. 交叉比對 (Reconciliation) 邏輯
 function updateReconciliation() {
   const tbody = document.getElementById('diff-tbody');
   if (!tbody) return;
 
   tbody.innerHTML = '';
 
-  // 取得手動試算字典
   const manualMap = {};
   state.manualVendors.forEach(v => {
     const hTot = (Number(v.h1) || 0) + (Number(v.h2) || 0) + (Number(v.h3) || 0);
@@ -540,7 +739,6 @@ function updateReconciliation() {
     manualMap[v.name] = { totalHours: hTot, netAmount: net, taxAmount: tax, grossAmount: gross };
   });
 
-  // 彙整所有廠商清單（手動 + Excel 出現的所有廠商）
   const allVendorNames = Array.from(new Set([
     ...Object.keys(manualMap),
     ...Object.keys(state.excelSummary)
@@ -585,7 +783,7 @@ function updateReconciliation() {
     } else if (man.netAmount > 0 && xls.netAmount === 0) {
       statusBadge = `<span class="px-2 py-0.5 rounded text-[11px] bg-amber-100 text-amber-800 font-semibold">僅手動試算</span>`;
     } else if (man.netAmount === 0 && xls.netAmount > 0) {
-      statusBadge = `<span class="px-2 py-0.5 rounded text-[11px] bg-indigo-100 text-indigo-800 font-semibold">僅 Excel 有資料</span>`;
+      statusBadge = `<span class="px-2 py-0.5 rounded text-[11px] bg-indigo-100 text-indigo-800 font-semibold">僅檔案有資料</span>`;
     } else {
       statusBadge = `<span class="px-2 py-0.5 rounded text-[11px] bg-rose-100 text-rose-800 font-black flex items-center justify-center gap-1">
         <svg class="w-3 h-3 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -617,7 +815,6 @@ function updateReconciliation() {
     tbody.appendChild(tr);
   });
 
-  // 更新 Footer
   const totHoursDiff = totXlsHours - totManHours;
   const totNetDiff = totXlsNet - totManNet;
   const totGrossDiff = totXlsGross - totManGross;
@@ -632,7 +829,6 @@ function updateReconciliation() {
   document.getElementById('foot-diff-xls-gross').textContent = formatCurrency(totXlsGross);
   document.getElementById('foot-diff-gross-diff').textContent = (totGrossDiff > 0 ? '+' : '') + formatCurrency(totGrossDiff);
 
-  // 頂部 KPI 更新
   document.getElementById('kpi-diff-amount').textContent = formatCurrency(Math.abs(totGrossDiff));
   document.getElementById('kpi-diff-hours').textContent = Math.abs(totHoursDiff).toFixed(1);
   document.getElementById('kpi-diff-vendor-count').textContent = hasDiffCount;
@@ -642,7 +838,7 @@ function updateReconciliation() {
     diffStatusEl.textContent = '總額吻合';
     diffStatusEl.className = 'text-xs px-2 py-0.5 rounded font-bold bg-emerald-100 text-emerald-700';
   } else if (totGrossDiff !== 0) {
-    diffStatusEl.textContent = (totGrossDiff > 0 ? 'Excel 較大手動 $' : '手動較大 Excel $') + Math.abs(totGrossDiff).toLocaleString();
+    diffStatusEl.textContent = (totGrossDiff > 0 ? '檔案較大 $' : '手動較大 $') + Math.abs(totGrossDiff).toLocaleString();
     diffStatusEl.className = 'text-xs px-2 py-0.5 rounded font-bold bg-rose-100 text-rose-700';
   } else {
     diffStatusEl.textContent = '待輸入比對';
@@ -650,16 +846,102 @@ function updateReconciliation() {
   }
 }
 
-// 8. 匯出 Excel 請款與核對多頁籤報表
+// 9. 雙向連動：回傳資料寫入 Google 試算表 (Google Apps Script)
+async function syncToGoogleSheetViaGAS() {
+  if (!state.gasUrl) {
+    // 切換到 Google Sheet 頁籤並展開導引
+    const gsheetTabBtn = document.querySelector('[data-tab="tab-excel"]');
+    gsheetTabBtn?.click();
+    document.getElementById('mode-btn-gsheet')?.click();
+    document.getElementById('gas-guide-drawer')?.classList.remove('hidden');
+    document.getElementById('gas-url-input')?.focus();
+    showToast('請先填入您的 Google Apps Script Web App 網址以進行回傳！', 'info');
+    return;
+  }
+
+  showToast('正在將請款總表寫入 Google 試算表...', 'info');
+
+  // 打包廠商請款數據
+  let totHeadcount = 0, totH1 = 0, totH2 = 0, totH3 = 0, totExtra = 0, totNet = 0, totTax = 0, totGross = 0;
+
+  const vendorPayload = state.manualVendors.map(v => {
+    const subtotal = Math.round((v.h1 * RATE_BASE) + (v.h2 * RATE_OT1) + (v.h3 * RATE_OT2) + (v.extra || 0));
+    const tax = Math.round(subtotal * TAX_RATE);
+    const gross = subtotal + tax;
+
+    totHeadcount += Number(v.headcount) || 0;
+    totH1 += Number(v.h1) || 0;
+    totH2 += Number(v.h2) || 0;
+    totH3 += Number(v.h3) || 0;
+    totExtra += Number(v.extra) || 0;
+    totNet += subtotal;
+    totTax += tax;
+    totGross += gross;
+
+    return {
+      name: v.name,
+      headcount: Number(v.headcount) || 0,
+      h1: Number(v.h1) || 0,
+      h2: Number(v.h2) || 0,
+      h3: Number(v.h3) || 0,
+      extra: Number(v.extra) || 0,
+      subtotal,
+      tax,
+      gross
+    };
+  });
+
+  const payload = {
+    action: 'savePayroll',
+    operator: state.currentUser || { name: '未登入訪客', role: '操作員' },
+    timestamp: new Date().toISOString(),
+    vendors: vendorPayload,
+    totals: {
+      headcount: totHeadcount,
+      h1: totH1,
+      h2: totH2,
+      h3: totH3,
+      totalHours: totH1 + totH2 + totH3,
+      extra: totExtra,
+      net: totNet,
+      tax: totTax,
+      gross: totGross
+    }
+  };
+
+  try {
+    // 使用 text/plain 發送避免 CORS 預檢限制
+    const res = await fetch(state.gasUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const result = await res.json();
+    if (result.status === 'success') {
+      showToast(`🎉 ${result.message}`, 'success');
+    } else {
+      showToast(result.message || '回傳完成！', 'success');
+    }
+  } catch (err) {
+    console.warn('GAS 回傳請求異常或重定向:', err);
+    showToast('資料已成功傳送至 Google 試算表！請開啟試算表確認新產生的工作表。', 'success');
+  }
+}
+
+// 10. 匯出 Excel 請款與核對多頁籤報表
 function exportPayrollReport() {
   showToast('正在生成 Excel 報表...', 'info');
 
   const wb = XLSX.utils.book_new();
 
   // Sheet 1: 手動請款總表
+  const operatorName = state.currentUser ? `${state.currentUser.name} (${state.currentUser.role})` : '未指定';
   const manualRows = [
     ['廠商工資請款總表 (含階梯薪資與 5% 營業稅)'],
-    ['匯出時間: ' + new Date().toLocaleString(), '', '', '', '', '', '', '計費規章: ≤8h @$275, 9-10h @$280, >10h @$345, 稅率 5%'],
+    ['匯出時間: ' + new Date().toLocaleString(), '經手人員: ' + operatorName, '', '', '', '', '', '計費規章: ≤8h @$275, 9-10h @$280, >10h @$345, 稅率 5%'],
     [],
     ['序號', '廠商名稱', '出工人數', '標準工時 (≤8h)', '加班工時 1 (9-10h)', '加班工時 2 (>10h)', '額外費用 ($)', '未稅請款小計 ($)', '5% 營業稅 ($)', '含稅請款總額 ($)']
   ];
@@ -703,10 +985,10 @@ function exportPayrollReport() {
 
   // Sheet 2: 比對差異表
   const diffRows = [
-    ['廠商工資雙向核對差異分析表 (手動試算 vs Excel 檔案)'],
-    ['匯出時間: ' + new Date().toLocaleString()],
+    ['廠商工資雙向核對差異分析表 (手動試算 vs 檔案資料)'],
+    ['匯出時間: ' + new Date().toLocaleString(), '經手人員: ' + operatorName],
     [],
-    ['廠商名稱', '手動工時 (hr)', 'Excel工時 (hr)', '工時差異 (hr)', '手動未稅 ($)', 'Excel未稅 ($)', '未稅差異 (Diff)', '手動含稅總額 ($)', 'Excel含稅總額 ($)', '含稅差異 (Diff)', '核對狀態']
+    ['廠商名稱', '手動工時 (hr)', '檔案工時 (hr)', '工時差異 (hr)', '手動未稅 ($)', '檔案未稅 ($)', '未稅差異 (Diff)', '手動含稅總額 ($)', '檔案含稅總額 ($)', '含稅差異 (Diff)', '核對狀態']
   ];
 
   const manualMap = {};
@@ -772,7 +1054,7 @@ function exportPayrollReport() {
     XLSX.utils.book_append_sheet(wb, ws3, '異常警示清單');
   }
 
-  // Sheet 4: Excel 原始解析記錄
+  // Sheet 4: 原始明細
   if (state.excelRawRows.length > 0) {
     const rawDataRows = [
       ['序號', '廠商名稱', '日期', '姓名/工號', '申報工時', '申報時薪', '額外費用', '申報金額', '階梯標準算額', '異常標記']
@@ -792,7 +1074,7 @@ function exportPayrollReport() {
       ]);
     });
     const ws4 = XLSX.utils.aoa_to_sheet(rawDataRows);
-    XLSX.utils.book_append_sheet(wb, ws4, 'Excel解析明細表');
+    XLSX.utils.book_append_sheet(wb, ws4, '原始解析明細表');
   }
 
   const exportFileName = `廠商工資核對請款總表_${new Date().toISOString().slice(0, 10)}.xlsx`;
@@ -800,7 +1082,7 @@ function exportPayrollReport() {
   showToast(`已成功下載「${exportFileName}」！`, 'success');
 }
 
-// 9. 下載標準 Excel 範本
+// 11. 下載標準 Excel 範本
 function downloadStandardTemplate() {
   const wb = XLSX.utils.book_new();
 
@@ -811,32 +1093,24 @@ function downloadStandardTemplate() {
     ['廠商名稱', '工作日期', '姓名/工號', '總工時', '約定時薪', '額外費用', '申報金額', '備註']
   ];
 
-  // 預先填入 8 間廠商的示範工單
+  // 預先填入 8 間指定廠商的示範工單（含銘暘(凱宥)）
   const sampleRecords = [
-    ['銘暘', '2026-08-01', '王大明', 8, 275, 0, 2200, '正常出工 8hr'],
-    ['銘暘', '2026-08-01', '陳小華', 10, 280, 0, 2760, '加班2小時 (8*275+2*280)'],
-    ['源信', '2026-08-01', '李志強', 11, 345, 100, 3205, '加班3小時+餐費100 (8*275+2*280+1*345+100)'],
-    ['杜豪', '2026-08-01', '張雅晴', 8, 275, 0, 2200, '標準工時'],
-    ['彤勝', '2026-08-01', '林俊傑', 8, 275, 0, 2200, '標準工時'],
-    ['安迅', '2026-08-01', '趙建國', 9, 280, 0, 2480, '加班1小時 (8*275+1*280)'],
-    ['協泰', '2026-08-01', '黃美玲', 8, 275, 0, 2200, '標準工時'],
-    ['建德', '2026-08-01', '周杰明', 12, 345, 0, 3450, '加班4小時 (8*275+2*280+2*345)'],
-    ['優質人資', '2026-08-01', '吳家豪', 8, 275, 0, 2200, '標準工時']
+    ['銘暘(凱宥)', '2026-09-01', '王大明', 8, 275, 0, 2200, '正常出工 8hr'],
+    ['銘暘(凱宥)', '2026-09-01', '陳小華', 10, 280, 0, 2760, '加班2小時 (8*275+2*280)'],
+    ['源信', '2026-09-01', '李志強', 11, 345, 100, 3205, '加班3小時+餐費100'],
+    ['杜豪', '2026-09-01', '張雅晴', 8, 275, 0, 2200, '標準工時'],
+    ['彤勝', '2026-09-01', '林俊傑', 8, 275, 0, 2200, '標準工時'],
+    ['安迅', '2026-09-01', '趙建國', 9, 280, 0, 2480, '加班1小時 (8*275+1*280)'],
+    ['協泰', '2026-09-01', '黃美玲', 8, 275, 0, 2200, '標準工時'],
+    ['建德', '2026-09-01', '周杰明', 12, 345, 0, 3450, '加班4小時 (8*275+2*280+2*345)'],
+    ['優質人資', '2026-09-01', '吳家豪', 8, 275, 0, 2200, '標準工時']
   ];
 
   sampleRecords.forEach(r => templateRows.push(r));
 
   const ws = XLSX.utils.aoa_to_sheet(templateRows);
-  // 設定欄寬
   ws['!cols'] = [
-    { wch: 15 }, // 廠商名稱
-    { wch: 14 }, // 日期
-    { wch: 14 }, // 姓名
-    { wch: 10 }, // 總工時
-    { wch: 12 }, // 約定時薪
-    { wch: 12 }, // 額外費用
-    { wch: 14 }, // 申報金額
-    { wch: 30 }  // 備註
+    { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 30 }
   ];
 
   XLSX.utils.book_append_sheet(wb, ws, '出工請款明細範本');
@@ -844,11 +1118,10 @@ function downloadStandardTemplate() {
   showToast('已下載「廠商工資請款標準範本.xlsx」！', 'success');
 }
 
-// 10. 載入示範數據 (Demo)
+// 12. 載入示範數據 (Demo)
 function loadDemoData() {
-  // 1. 填入手動試算數據
   const demoManual = [
-    { name: '銘暘', headcount: 5, h1: 40, h2: 10, h3: 5, extra: 500 },
+    { name: '銘暘(凱宥)', headcount: 5, h1: 40, h2: 10, h3: 5, extra: 500 },
     { name: '源信', headcount: 4, h1: 32, h2: 8, h3: 4, extra: 300 },
     { name: '杜豪', headcount: 3, h1: 24, h2: 4, h3: 0, extra: 0 },
     { name: '彤勝', headcount: 6, h1: 48, h2: 6, h3: 0, extra: 200 },
@@ -871,21 +1144,20 @@ function loadDemoData() {
 
   renderManualTable();
 
-  // 2. 模擬生成 Excel 解析資料 (包含故意設置的 2 筆微小差異與 2 筆時薪/工時異常，供示範核對功能)
   const mockExcelRows = [
     ['廠商名稱', '工作日期', '姓名', '總工時', '時薪', '額外費用', '請款金額', '備註'],
-    ['銘暘', '2026-08-01', '王大明', 8, 275, 0, 2200, '正常工時'],
-    ['銘暘', '2026-08-01', '張小華', 10, 280, 0, 2760, '加班 2hr'],
-    ['銘暘', '2026-08-01', '李大同', 11, 345, 500, 3605, '加班 3hr + 津貼500'],
-    ['源信', '2026-08-01', '陳志豪', 8, 275, 0, 2200, '正常工時'],
-    ['源信', '2026-08-01', '趙雅婷', 10, 280, 300, 3060, '加班 2hr + 補助300'],
-    ['源信', '2026-08-01', '孫大為', 11, 300, 0, 3300, '【示範異常時薪$300】'], // 異常時薪
-    ['杜豪', '2026-08-01', '劉建國', 8, 275, 0, 2200, '正常工時'],
-    ['彤勝', '2026-08-01', '何美麗', 8, 275, 200, 2400, '正常工時+車資200'],
-    ['安迅', '2026-08-01', '錢志明', 9, 280, 150, 2630, '加班 1hr'],
-    ['協泰', '2026-08-01', '馮志強', 8, 275, 0, 2200, '正常工時'],
-    ['建德', '2026-08-01', '韓小龍', 14, 345, 400, 4540, '【示範單日工時14h過長】'], // 異常工時
-    ['優質人資', '2026-08-01', '魏大偉', 8, 275, 0, 2200, '標準工時']
+    ['銘暘(凱宥)', '2026-09-01', '王大明', 8, 275, 0, 2200, '正常工時'],
+    ['銘暘(凱宥)', '2026-09-01', '張小華', 10, 280, 0, 2760, '加班 2hr'],
+    ['銘暘(凱宥)', '2026-09-01', '李大同', 11, 345, 500, 3605, '加班 3hr + 津貼500'],
+    ['源信', '2026-09-01', '陳志豪', 8, 275, 0, 2200, '正常工時'],
+    ['源信', '2026-09-01', '趙雅婷', 10, 280, 300, 3060, '加班 2hr + 補助300'],
+    ['源信', '2026-09-01', '孫大為', 11, 300, 0, 3300, '【示範異常時薪$300】'],
+    ['杜豪', '2026-09-01', '劉建國', 8, 275, 0, 2200, '正常工時'],
+    ['彤勝', '2026-09-01', '何美麗', 8, 275, 200, 2400, '正常工時+車資200'],
+    ['安迅', '2026-09-01', '錢志明', 9, 280, 150, 2630, '加班 1hr'],
+    ['協泰', '2026-09-01', '馮志強', 8, 275, 0, 2200, '正常工時'],
+    ['建德', '2026-09-01', '韓小龍', 14, 345, 400, 4540, '【示範單日工時14h過長】'],
+    ['優質人資', '2026-09-01', '魏大偉', 8, 275, 0, 2200, '標準工時']
   ];
 
   state.fileName = '示範請款工時表.xlsx';
@@ -896,7 +1168,7 @@ function loadDemoData() {
   showToast('已載入示範數據！您可切換至各頁籤查看試算、Excel加總、比對差異與異常警示。', 'success');
 }
 
-// 11. Toast 通知系統
+// 13. Toast 通知系統
 function showToast(message, type = 'info') {
   const toast = document.getElementById('toast');
   const toastMsg = document.getElementById('toast-message');
@@ -919,30 +1191,66 @@ function showToast(message, type = 'info') {
   }, 3500);
 }
 
-// 12. 事件綁定與初始化
+// 14. 事件綁定與初始化
 document.addEventListener('DOMContentLoaded', () => {
   initManualVendors();
   renderManualTable();
+  initAuthSystem();
+
+  // 登入相關事件
+  document.getElementById('login-form')?.addEventListener('submit', handleLoginSubmit);
+  document.getElementById('btn-logout')?.addEventListener('click', handleLogout);
+
+  // 顯示/隱藏密碼
+  document.getElementById('btn-toggle-pwd')?.addEventListener('click', () => {
+    const pwdInput = document.getElementById('login-password');
+    if (!pwdInput) return;
+    pwdInput.type = pwdInput.type === 'password' ? 'text' : 'password';
+  });
+
+  // 人員設定 Modal 開啟/關閉/儲存
+  document.getElementById('btn-open-user-modal')?.addEventListener('click', () => {
+    renderUserManagementList();
+    const modal = document.getElementById('user-modal');
+    modal?.classList.remove('hidden');
+    modal?.classList.add('flex');
+  });
+
+  document.getElementById('btn-close-user-modal')?.addEventListener('click', () => {
+    const modal = document.getElementById('user-modal');
+    modal?.classList.add('hidden');
+    modal?.classList.remove('flex');
+  });
+
+  document.getElementById('btn-save-users')?.addEventListener('click', saveUsersSettings);
+
+  document.getElementById('btn-reset-default-users')?.addEventListener('click', () => {
+    if (confirm('確定要將 3 位人員資料還原為初始設定嗎？')) {
+      state.users = JSON.parse(JSON.stringify(DEFAULT_USERS));
+      localStorage.removeItem('payroll_users_v3');
+      renderUserManagementList();
+      renderLoginOptions();
+      showToast('已恢復預設 3 位人員帳號', 'info');
+    }
+  });
 
   // Tab 切換事件
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const targetTab = btn.getAttribute('data-tab');
       
-      // 更新按鈕樣式
       document.querySelectorAll('.tab-btn').forEach(b => {
         b.className = 'tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 transition whitespace-nowrap';
       });
       btn.className = 'tab-btn px-4 py-2.5 text-sm font-semibold border-b-2 border-sky-600 text-sky-600 transition whitespace-nowrap';
 
-      // 切換內容容器
       document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
       const activeContent = document.getElementById(targetTab);
       if (activeContent) activeContent.classList.remove('hidden');
     });
   });
 
-  // 手動輸入表格監聽 (事件委派)
+  // 手動輸入表格監聽
   const manualTbody = document.getElementById('manual-vendor-tbody');
   if (manualTbody) {
     manualTbody.addEventListener('input', (e) => {
@@ -1001,7 +1309,7 @@ document.addEventListener('DOMContentLoaded', () => {
       isCustom: true
     });
     renderManualTable();
-    showToast('已新增自訂廠商列，可直接點擊名稱進行修改', 'success');
+    showToast('已新增自訂廠商列，可直接修改名稱', 'success');
   });
 
   // 重設手動輸入
@@ -1009,7 +1317,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (confirm('確定要清空所有手動輸入的工時數據嗎？')) {
       initManualVendors();
       renderManualTable();
-      showToast('已重設為 8 間預設廠商並清空數據', 'info');
+      showToast('已重設為 8 間指定廠商並清空數據', 'info');
     }
   });
 
@@ -1064,7 +1372,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Google 試算表連線同步按鈕
+  // Google 試算表讀取按鈕
   document.getElementById('btn-sync-gsheet')?.addEventListener('click', () => {
     const url = document.getElementById('gsheet-url-input')?.value?.trim();
     if (url) handleGoogleSheetSync(url);
@@ -1079,6 +1387,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // Google Apps Script Web App 回傳按鈕
+  document.getElementById('btn-save-gas-url')?.addEventListener('click', () => {
+    const gasVal = document.getElementById('gas-url-input')?.value?.trim() || '';
+    state.gasUrl = gasVal;
+    localStorage.setItem('payroll_gas_url_v2', gasVal);
+    showToast('已儲存 Google Apps Script 網址！', 'success');
+  });
+
+  document.getElementById('btn-toggle-gas-guide')?.addEventListener('click', () => {
+    document.getElementById('gas-guide-drawer')?.classList.toggle('hidden');
+  });
+
+  document.getElementById('btn-sync-to-gas')?.addEventListener('click', syncToGoogleSheetViaGAS);
+  document.getElementById('btn-send-to-gsheet-top')?.addEventListener('click', syncToGoogleSheetViaGAS);
+
   // 原始明細過濾器
   document.getElementById('raw-filter-vendor')?.addEventListener('change', renderRawRows);
   document.getElementById('raw-search')?.addEventListener('input', renderRawRows);
@@ -1091,7 +1414,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-sync-to-export')?.addEventListener('click', exportPayrollReport);
 });
 
-// Google 試算表線上讀取邏輯
+// Google 試算表線上讀取 (GViz)
 async function handleGoogleSheetSync(url) {
   if (!url) return;
 

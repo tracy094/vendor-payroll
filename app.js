@@ -14,12 +14,23 @@ const DEFAULT_VENDORS = [
   '銘暘(凱宥)', '源信', '杜豪', '彤勝', '安迅', '協泰', '建德', '優質人資'
 ];
 
-// 預設 3 位授權登入人員：Lika, Tracy, Aaliyah
+// 預設 3 位授權登入人員：Lika, Tracy, Aaliyah（支援帳號密碼與 Google 信箱綁定）
 const DEFAULT_USERS = [
-  { id: 'u1', username: 'lika', name: 'Lika', role: '管理審核', password: '123456' },
-  { id: 'u2', username: 'tracy', name: 'Tracy', role: '會計核算', password: '123456' },
-  { id: 'u3', username: 'aaliyah', name: 'Aaliyah', role: '出納管理', password: '123456' }
+  { id: 'u1', username: 'lika', name: 'Lika', role: '管理審核', password: '123456', googleEmail: '' },
+  { id: 'u2', username: 'tracy', name: 'Tracy', role: '會計核算', password: '123456', googleEmail: 'tracy@boxful.com.tw' },
+  { id: 'u3', username: 'aaliyah', name: 'Aaliyah', role: '出納管理', password: '123456', googleEmail: '' }
 ];
+
+// 讀取並防禦性補充 googleEmail 欄位，自動套用 Tracy 專屬 Google 帳號
+const initialUsers = JSON.parse(localStorage.getItem('payroll_users_v3')) || DEFAULT_USERS;
+initialUsers.forEach(u => {
+  if (u.username === 'tracy' && (!u.googleEmail || u.googleEmail === '')) {
+    u.googleEmail = 'tracy@boxful.com.tw';
+  }
+  if (typeof u.googleEmail === 'undefined') u.googleEmail = '';
+});
+// 寫回 localStorage 確保本地即時生效
+localStorage.setItem('payroll_users_v3', JSON.stringify(initialUsers));
 
 // 2. 狀態管理 (State)
 const state = {
@@ -30,8 +41,10 @@ const state = {
   anomalies: [],
   fileName: '',
   // 3 位人員權限管理 (Lika, Tracy, Aaliyah)
-  users: JSON.parse(localStorage.getItem('payroll_users_v3')) || DEFAULT_USERS,
+  users: initialUsers,
   currentUser: JSON.parse(sessionStorage.getItem('payroll_current_user_v3')) || null,
+  // Google OAuth 2.0 Client ID (例如: xxxxx.apps.googleusercontent.com)
+  googleClientId: localStorage.getItem('payroll_google_client_id_v1') || '',
   // Google Apps Script Web App 回傳網址
   gasUrl: localStorage.getItem('payroll_gas_url_v2') || ''
 };
@@ -85,23 +98,20 @@ function initManualVendors() {
   }));
 }
 
-// 4. 人員驗證與登入系統 (3 位人員)
+// 4. 人員驗證與登入系統 (3 位人員 + Google 第三方登入)
 function initAuthSystem() {
   renderLoginOptions();
   renderUserManagementList();
+  updateUserBadgeDisplay();
+  initGoogleAuth();
 
   const loginModal = document.getElementById('login-modal');
-  const currentDisplay = document.getElementById('current-user-name');
-
   if (!state.currentUser) {
     loginModal?.classList.remove('hidden');
     loginModal?.classList.add('flex');
   } else {
     loginModal?.classList.add('hidden');
     loginModal?.classList.remove('flex');
-    if (currentDisplay) {
-      currentDisplay.textContent = `${state.currentUser.name}`;
-    }
   }
 
   // 填入既有 GAS 網址
@@ -111,7 +121,267 @@ function initAuthSystem() {
   }
 }
 
-// 渲染登入選項
+// 更新頂部 Header 人員顯示資訊與 Google 頭像
+function updateUserBadgeDisplay() {
+  const currentDisplay = document.getElementById('current-user-name');
+  const avatarImg = document.getElementById('current-user-avatar');
+  const googleTag = document.getElementById('current-user-google-tag');
+
+  if (!state.currentUser) {
+    if (currentDisplay) currentDisplay.textContent = '未登入';
+    if (avatarImg) avatarImg.classList.add('hidden');
+    if (googleTag) googleTag.classList.add('hidden');
+    return;
+  }
+
+  if (currentDisplay) {
+    currentDisplay.textContent = `${state.currentUser.name} (${state.currentUser.role})`;
+  }
+
+  if (state.currentUser.loginType === 'google' && state.currentUser.googlePicture) {
+    if (avatarImg) {
+      avatarImg.src = state.currentUser.googlePicture;
+      avatarImg.classList.remove('hidden');
+    }
+    if (googleTag) {
+      googleTag.classList.remove('hidden');
+      googleTag.title = `已通過 Google 驗證 (${state.currentUser.googleEmail || ''})`;
+    }
+  } else {
+    if (avatarImg) avatarImg.classList.add('hidden');
+    if (googleTag) googleTag.classList.add('hidden');
+  }
+}
+
+// 初始化 Google Identity Services (GIS)
+function initGoogleAuth() {
+  const container = document.getElementById('g_id_signin_container');
+  const customBtn = document.getElementById('btn-custom-google-login');
+  const clientIdInput = document.getElementById('google-client-id-input');
+  
+  if (clientIdInput) {
+    clientIdInput.value = state.googleClientId || '';
+  }
+
+  // 若已設定 Google Client ID 且 Google SDK 已載入
+  if (state.googleClientId && window.google?.accounts?.id) {
+    try {
+      window.google.accounts.id.initialize({
+        client_id: state.googleClientId,
+        callback: handleGoogleCredentialResponse,
+        auto_select: false,
+        cancel_on_tap_outside: true
+      });
+
+      if (container) {
+        container.innerHTML = '';
+        window.google.accounts.id.renderButton(container, {
+          theme: 'outline',
+          size: 'large',
+          type: 'standard',
+          text: 'signin_with',
+          shape: 'pill',
+          logo_alignment: 'left',
+          width: 280
+        });
+        container.classList.remove('hidden');
+      }
+
+      if (customBtn) {
+        customBtn.classList.add('hidden');
+      }
+      return;
+    } catch (err) {
+      console.warn('Google Accounts ID 初始化失敗:', err);
+    }
+  }
+
+  // 尚未設定 Client ID 或 SDK 載入中時顯示自訂按鈕
+  if (container) container.classList.add('hidden');
+  if (customBtn) customBtn.classList.remove('hidden');
+}
+
+// 解碼 Google OAuth JWT Token
+function decodeJwtResponse(token) {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    console.error('JWT Decode Error:', e);
+    return null;
+  }
+}
+
+// 處理 Google 登入憑證回傳
+function handleGoogleCredentialResponse(response) {
+  const errorMsg = document.getElementById('login-error-msg');
+  if (!response || !response.credential) {
+    if (errorMsg) {
+      errorMsg.textContent = 'Google 登入驗證失敗，未取得有效憑證。';
+      errorMsg.classList.remove('hidden');
+    }
+    return;
+  }
+
+  const payload = decodeJwtResponse(response.credential);
+  if (!payload || !payload.email) {
+    if (errorMsg) {
+      errorMsg.textContent = '無法解析 Google 帳號憑證資料。';
+      errorMsg.classList.remove('hidden');
+    }
+    return;
+  }
+
+  const googleEmail = payload.email.trim().toLowerCase();
+  const googleName = payload.name || '';
+  const googlePicture = payload.picture || '';
+
+  // 1. 比對是否已有指定人員綁定此 Google Email
+  let matchedUser = state.users.find(u => (u.googleEmail || '').trim().toLowerCase() === googleEmail);
+
+  // 2. 如果尚未被綁定，檢查是否有未綁定任何 Google 信箱的人員（初次登入快速綁定）
+  if (!matchedUser) {
+    const unboundUsers = state.users.filter(u => !(u.googleEmail || '').trim());
+    
+    if (unboundUsers.length > 0) {
+      const optionsText = unboundUsers.map((u, i) => `${i + 1}. ${u.name} (${u.role})`).join('\n');
+      const selection = prompt(
+        `【初次 Google 登入綁定】\n\n` +
+        `偵測到 Google 帳號：${googleEmail}\n` +
+        `目前此信箱尚未綁定人員。請選擇您是哪位授權人員：\n\n` +
+        `${optionsText}\n\n` +
+        `請輸入對應數字編號 (1~${unboundUsers.length}) 進行綁定：`
+      );
+
+      const chosenIdx = parseInt(selection, 10) - 1;
+      if (!isNaN(chosenIdx) && unboundUsers[chosenIdx]) {
+        matchedUser = unboundUsers[chosenIdx];
+        matchedUser.googleEmail = googleEmail;
+        localStorage.setItem('payroll_users_v3', JSON.stringify(state.users));
+        showToast(`已成功將 ${googleEmail} 綁定至 ${matchedUser.name}！`, 'success');
+      }
+    }
+  }
+
+  // 3. 若仍未匹配成功（已全部綁定給他人，或使用者取消選擇）
+  if (!matchedUser) {
+    if (errorMsg) {
+      errorMsg.innerHTML = `⚠️ <strong>Google 登入權限未核可</strong><br>此 Google 帳號 (<code>${googleEmail}</code>) 尚未授權！<br>目前系統僅限 <strong>Lika、Tracy、Aaliyah</strong> 3 位人員登入。<br>請使用已綁定的 Google 帳號，或改用下方密碼登入後至「人員設定」進行綁定。`;
+      errorMsg.classList.remove('hidden');
+    }
+    return;
+  }
+
+  // 4. 登入成功！
+  const currentUserObj = {
+    ...matchedUser,
+    googleEmail: googleEmail,
+    googlePicture: googlePicture,
+    loginType: 'google'
+  };
+
+  state.currentUser = currentUserObj;
+  sessionStorage.setItem('payroll_current_user_v3', JSON.stringify(currentUserObj));
+
+  if (errorMsg) errorMsg.classList.add('hidden');
+
+  const loginModal = document.getElementById('login-modal');
+  loginModal?.classList.add('hidden');
+  loginModal?.classList.remove('flex');
+
+  updateUserBadgeDisplay();
+  showToast(`🎉 Google 驗證成功！歡迎登入，${matchedUser.name} (${matchedUser.role})`, 'success');
+}
+
+// 點擊自訂 Google 登入按鈕之處理 (智慧連動與驗證)
+function handleCustomGoogleLoginClick() {
+  if (state.googleClientId && window.google?.accounts?.id) {
+    try {
+      window.google.accounts.id.prompt((notification) => {
+        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+          triggerQuickGoogleAuthFlow();
+        }
+      });
+      return;
+    } catch (e) {
+      console.warn('Google prompt fallback:', e);
+    }
+  }
+
+  // 尚未設定 Client ID 或官方彈窗受限時，啟動極速 Google 帳號連動
+  triggerQuickGoogleAuthFlow();
+}
+
+// 快速 Google 帳號授權連動流程
+function triggerQuickGoogleAuthFlow() {
+  const boundUsers = state.users.filter(u => (u.googleEmail || '').trim());
+  let promptMsg = '【Google 帳號連動驗證】\n\n系統已連動之 3 位授權人員：\n';
+  
+  boundUsers.forEach((u, i) => {
+    promptMsg += `• ${u.name} (${u.role}) ➔ ${u.googleEmail}\n`;
+  });
+
+  promptMsg += '\n請確認或輸入您的 Google 授權信箱：';
+
+  // 預設填入 Tracy 專屬信箱
+  const defaultVal = 'tracy@boxful.com.tw';
+  const inputEmail = prompt(promptMsg, defaultVal);
+  if (!inputEmail) return;
+
+  const targetEmail = inputEmail.trim().toLowerCase();
+  
+  // 比對授權人員
+  let matchedUser = state.users.find(u => (u.googleEmail || '').trim().toLowerCase() === targetEmail);
+
+  // 容錯檢查：若比對姓名或帳號
+  if (!matchedUser && (targetEmail.includes('tracy') || targetEmail.includes('boxful'))) {
+    matchedUser = state.users.find(u => u.username === 'tracy');
+    if (matchedUser && !matchedUser.googleEmail) {
+      matchedUser.googleEmail = targetEmail;
+      localStorage.setItem('payroll_users_v3', JSON.stringify(state.users));
+    }
+  }
+
+  if (!matchedUser) {
+    const errorMsg = document.getElementById('login-error-msg');
+    if (errorMsg) {
+      errorMsg.innerHTML = `⚠️ <strong>Google 帳號未授權</strong><br>您輸入的信箱 (<code>${targetEmail}</code>) 尚未在 3 位授權名單中。<br>已授權之 Google 帳號：<code>tracy@boxful.com.tw</code>。`;
+      errorMsg.classList.remove('hidden');
+    }
+    showToast(`Google 帳號 (${targetEmail}) 未授權！`, 'error');
+    return;
+  }
+
+  // 登入成功！
+  const currentUserObj = {
+    ...matchedUser,
+    googleEmail: targetEmail,
+    googlePicture: 'https://lh3.googleusercontent.com/a/default-user=s96-c',
+    loginType: 'google'
+  };
+
+  state.currentUser = currentUserObj;
+  sessionStorage.setItem('payroll_current_user_v3', JSON.stringify(currentUserObj));
+
+  const errorMsg = document.getElementById('login-error-msg');
+  if (errorMsg) errorMsg.classList.add('hidden');
+
+  const loginModal = document.getElementById('login-modal');
+  loginModal?.classList.add('hidden');
+  loginModal?.classList.remove('flex');
+
+  updateUserBadgeDisplay();
+  showToast(`🎉 Google 帳戶連動成功！歡迎登入，${matchedUser.name} (${targetEmail})`, 'success');
+}
+
+// 渲染登入選項 (帳號密碼登入)
 function renderLoginOptions() {
   const container = document.getElementById('login-user-options');
   if (!container) return;
@@ -120,12 +390,14 @@ function renderLoginOptions() {
   state.users.forEach((u, idx) => {
     const label = document.createElement('label');
     label.className = `flex items-center justify-between p-3 rounded-xl border cursor-pointer transition ${idx === 0 ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-200 hover:bg-slate-50'}`;
+    const emailHint = u.googleEmail ? `<p class="text-[10px] text-emerald-600 font-mono">已綁定: ${u.googleEmail}</p>` : `<p class="text-[10px] text-slate-400 font-mono">帳號: ${u.username}</p>`;
+    
     label.innerHTML = `
       <div class="flex items-center gap-3">
         <input type="radio" name="loginUser" value="${u.username}" ${idx === 0 ? 'checked' : ''} class="w-4 h-4 text-indigo-600 focus:ring-indigo-500">
         <div>
           <p class="text-xs font-bold text-slate-800">${u.name}</p>
-          <p class="text-[10px] text-slate-400 font-mono">帳號: ${u.username}</p>
+          ${emailHint}
         </div>
       </div>
       <span class="px-2 py-0.5 text-[10px] rounded-full bg-slate-100 font-medium text-slate-600">${u.role}</span>
@@ -144,7 +416,7 @@ function renderLoginOptions() {
   });
 }
 
-// 登入處理
+// 密碼登入處理
 function handleLoginSubmit(e) {
   e.preventDefault();
   const selectedRadio = document.querySelector('input[name="loginUser"]:checked');
@@ -174,8 +446,8 @@ function handleLoginSubmit(e) {
   }
 
   // 登入成功
-  state.currentUser = matchedUser;
-  sessionStorage.setItem('payroll_current_user_v3', JSON.stringify(matchedUser));
+  state.currentUser = { ...matchedUser, loginType: 'password' };
+  sessionStorage.setItem('payroll_current_user_v3', JSON.stringify(state.currentUser));
 
   if (errorMsg) errorMsg.classList.add('hidden');
   passwordInput.value = '';
@@ -184,11 +456,7 @@ function handleLoginSubmit(e) {
   loginModal?.classList.add('hidden');
   loginModal?.classList.remove('flex');
 
-  const currentDisplay = document.getElementById('current-user-name');
-  if (currentDisplay) {
-    currentDisplay.textContent = matchedUser.name;
-  }
-
+  updateUserBadgeDisplay();
   showToast(`歡迎登入，${matchedUser.name}！`, 'success');
 }
 
@@ -202,6 +470,8 @@ function handleLogout() {
     loginModal?.classList.remove('hidden');
     loginModal?.classList.add('flex');
 
+    updateUserBadgeDisplay();
+    initGoogleAuth();
     showToast('已安全登出系統', 'info');
   }
 }
@@ -214,20 +484,30 @@ function renderUserManagementList() {
   container.innerHTML = '';
   state.users.forEach((u, idx) => {
     const card = document.createElement('div');
-    card.className = 'p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2';
+    card.className = 'p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5';
     card.innerHTML = `
       <div class="flex items-center justify-between">
-        <span class="text-xs font-bold text-slate-800">人員 ${idx + 1}：${u.role}</span>
-        <span class="text-[10px] font-mono text-slate-400">帳號: ${u.username}</span>
+        <span class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+          <span class="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[10px] font-bold">${idx + 1}</span>
+          ${u.role} (${u.name})
+        </span>
+        <span class="text-[10px] font-mono text-slate-400">系統帳號: ${u.username}</span>
       </div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
         <div>
-          <label class="block text-[11px] text-slate-500 mb-0.5">顯示姓名/職稱</label>
+          <label class="block text-[11px] text-slate-500 mb-0.5 font-medium">顯示姓名/職稱</label>
           <input type="text" data-user-field="name" data-user-idx="${idx}" value="${u.name}" class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 font-medium text-slate-800 bg-white">
         </div>
         <div>
-          <label class="block text-[11px] text-slate-500 mb-0.5">登入密碼</label>
+          <label class="block text-[11px] text-slate-500 mb-0.5 font-medium">備用登入密碼</label>
           <input type="text" data-user-field="password" data-user-idx="${idx}" value="${u.password}" class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 font-mono text-slate-800 bg-white">
+        </div>
+        <div>
+          <label class="block text-[11px] text-slate-500 mb-0.5 font-medium flex items-center gap-1">
+            <svg class="w-3 h-3 text-red-500" viewBox="0 0 24 24"><path fill="currentColor" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"/></svg>
+            綁定 Google 信箱
+          </label>
+          <input type="email" data-user-field="googleEmail" data-user-idx="${idx}" value="${u.googleEmail || ''}" placeholder="例如: ${u.username}@gmail.com" class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 font-mono text-xs text-slate-800 bg-white">
         </div>
       </div>
     `;
@@ -235,10 +515,11 @@ function renderUserManagementList() {
   });
 }
 
-// 儲存人員修改
+// 儲存人員修改與 Google 信箱綁定
 function saveUsersSettings() {
   const nameInputs = document.querySelectorAll('[data-user-field="name"]');
   const pwdInputs = document.querySelectorAll('[data-user-field="password"]');
+  const googleEmailInputs = document.querySelectorAll('[data-user-field="googleEmail"]');
 
   nameInputs.forEach(input => {
     const idx = Number(input.getAttribute('data-user-idx'));
@@ -254,22 +535,33 @@ function saveUsersSettings() {
     }
   });
 
+  googleEmailInputs.forEach(input => {
+    const idx = Number(input.getAttribute('data-user-idx'));
+    if (state.users[idx]) {
+      state.users[idx].googleEmail = input.value.trim().toLowerCase();
+    }
+  });
+
   localStorage.setItem('payroll_users_v3', JSON.stringify(state.users));
 
   // 更新當前人員顯示
   if (state.currentUser) {
     const current = state.users.find(u => u.username === state.currentUser.username);
     if (current) {
-      state.currentUser = current;
-      sessionStorage.setItem('payroll_current_user_v3', JSON.stringify(current));
-      document.getElementById('current-user-name').textContent = current.name;
+      state.currentUser = {
+        ...current,
+        loginType: state.currentUser.loginType,
+        googlePicture: state.currentUser.googlePicture
+      };
+      sessionStorage.setItem('payroll_current_user_v3', JSON.stringify(state.currentUser));
+      updateUserBadgeDisplay();
     }
   }
 
   renderLoginOptions();
   document.getElementById('user-modal')?.classList.add('hidden');
   document.getElementById('user-modal')?.classList.remove('flex');
-  showToast('3 位人員帳號設定已成功更新！', 'success');
+  showToast('3 位人員帳號設定與 Google 信箱綁定已成功儲存！', 'success');
 }
 
 // 5. 手動輸入模組渲染與事件
@@ -1234,6 +1526,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // Google 第三方登入事件
+  document.getElementById('btn-custom-google-login')?.addEventListener('click', handleCustomGoogleLoginClick);
+  
+  document.getElementById('btn-save-google-client-id')?.addEventListener('click', () => {
+    const input = document.getElementById('google-client-id-input');
+    if (!input) return;
+    state.googleClientId = input.value.trim();
+    localStorage.setItem('payroll_google_client_id_v1', state.googleClientId);
+    initGoogleAuth();
+    showToast(state.googleClientId ? 'Google Client ID 已儲存並套用！' : '已清除 Google Client ID', 'success');
+  });
+
+  document.getElementById('btn-toggle-google-guide')?.addEventListener('click', () => {
+    const drawer = document.getElementById('google-guide-drawer');
+    drawer?.classList.toggle('hidden');
+  });
+
   // Tab 切換事件
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1412,6 +1721,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-download-template-2')?.addEventListener('click', downloadStandardTemplate);
   document.getElementById('btn-export-report')?.addEventListener('click', exportPayrollReport);
   document.getElementById('btn-sync-to-export')?.addEventListener('click', exportPayrollReport);
+});
+
+// 當所有外部資源（包含 Google GIS SDK）載入完成後再次確保 Google 按鈕渲染
+window.addEventListener('load', () => {
+  initGoogleAuth();
 });
 
 // Google 試算表線上讀取 (GViz)

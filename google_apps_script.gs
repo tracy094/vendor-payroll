@@ -36,8 +36,7 @@ function doPost(e) {
     }
     sheet = ss.insertSheet(sheetName);
 
-    // 設定表頭與資訊
-    var operatorInfo = data.operator ? (data.operator.name + " (" + data.operator.role + ")") : "未指定操作員";
+    var operatorInfo = data.operator ? (data.operator.name + " (" + data.operator.role + (data.operator.googleEmail ? " · Google: " + data.operator.googleEmail : "") + ")") : "未指定操作員";
 
     var headerData = [
       ["廠商工資試算與請款彙整表", "", "", "", "", "", "", "", "", ""],

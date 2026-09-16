@@ -16,13 +16,13 @@ const DEFAULT_VENDORS = [
 
 // 預設 3 位授權登入人員：Lika, Tracy, Aaliyah（支援帳號密碼與 Google 信箱綁定）
 const DEFAULT_USERS = [
-  { id: 'u1', username: 'lika', name: 'Lika', role: '管理審核', password: '123456', googleEmail: '' },
-  { id: 'u2', username: 'tracy', name: 'Tracy', role: '會計核算', password: '123456', googleEmail: 'tracy@boxful.com.tw' },
-  { id: 'u3', username: 'aaliyah', name: 'Aaliyah', role: '出納管理', password: '123456', googleEmail: '' }
+  { username: 'lika', password: '1', name: 'Lika', role: '人資主管', googleEmail: 'Lika@boxful.com.tw', canEdit: false },
+  { username: 'tracy', password: '1', name: 'Tracy', role: '會計核算', googleEmail: 'tracy@boxful.com.tw', canEdit: true },
+  { username: 'aaliyah', password: '1', name: 'Aaliyah', role: '系統管理員', googleEmail: 'aaliyah@boxful.com.tw', canEdit: false }
 ];
 
 // 讀取並防禦性補充 googleEmail 欄位，自動套用 Tracy 專屬 Google 帳號
-const initialUsers = JSON.parse(localStorage.getItem('payroll_users_v3')) || DEFAULT_USERS;
+const initialUsers = JSON.parse(localStorage.getItem('payroll_users_v4')) || DEFAULT_USERS;
 initialUsers.forEach(u => {
   if (u.username === 'tracy' && (!u.googleEmail || u.googleEmail === '')) {
     u.googleEmail = 'tracy@boxful.com.tw';
@@ -30,7 +30,7 @@ initialUsers.forEach(u => {
   if (typeof u.googleEmail === 'undefined') u.googleEmail = '';
 });
 // 寫回 localStorage 確保本地即時生效
-localStorage.setItem('payroll_users_v3', JSON.stringify(initialUsers));
+localStorage.setItem('payroll_users_v4', JSON.stringify(initialUsers));
 
 // 2. 狀態管理 (State)
 const state = {
@@ -98,27 +98,42 @@ function initManualVendors() {
   }));
 }
 
-// 4. 人員驗證與登入系統 (3 位人員 + Google 第三方登入)
+// 4. 人員驗證與登入系統 (Firebase Auth 整合)
 function initAuthSystem() {
-  renderLoginOptions();
+  // Read Firebase user from sessionStorage (set by auth guard in index.html)
+  const fbUser = JSON.parse(sessionStorage.getItem('firebase_current_user') || 'null');
+  if (fbUser) {
+    // Map Firebase user to app's currentUser structure
+    state.currentUser = {
+      name: fbUser.name,
+      role: mapEmailToRole(fbUser.email),
+      googleEmail: fbUser.email,
+      googlePicture: fbUser.photoURL,
+      loginType: 'firebase',
+      emailVerified: fbUser.emailVerified,
+      uid: fbUser.uid
+    };
+    sessionStorage.setItem('payroll_current_user_v3', JSON.stringify(state.currentUser));
+  }
+
   renderUserManagementList();
   updateUserBadgeDisplay();
-  initGoogleAuth();
-
-  const loginModal = document.getElementById('login-modal');
-  if (!state.currentUser) {
-    loginModal?.classList.remove('hidden');
-    loginModal?.classList.add('flex');
-  } else {
-    loginModal?.classList.add('hidden');
-    loginModal?.classList.remove('flex');
-  }
 
   // 填入既有 GAS 網址
   const gasInput = document.getElementById('gas-url-input');
   if (gasInput && state.gasUrl) {
     gasInput.value = state.gasUrl;
   }
+}
+
+// 依 email 對應角色（依據 Google Sheet 權限表）
+function mapEmailToRole(email) {
+  if (!email) return '使用者';
+  const e = email.toLowerCase();
+  if (e.includes('lika')) return '人資主管';
+  if (e.includes('tracy')) return '會計核算';
+  if (e.includes('aaliyah')) return '系統管理員';
+  return '一般使用者';
 }
 
 // 更新頂部 Header 人員顯示資訊與 Google 頭像
@@ -264,7 +279,7 @@ function handleGoogleCredentialResponse(response) {
       if (!isNaN(chosenIdx) && unboundUsers[chosenIdx]) {
         matchedUser = unboundUsers[chosenIdx];
         matchedUser.googleEmail = googleEmail;
-        localStorage.setItem('payroll_users_v3', JSON.stringify(state.users));
+        localStorage.setItem('payroll_users_v4', JSON.stringify(state.users));
         showToast(`已成功將 ${googleEmail} 綁定至 ${matchedUser.name}！`, 'success');
       }
     }
@@ -345,7 +360,7 @@ function triggerQuickGoogleAuthFlow() {
     matchedUser = state.users.find(u => u.username === 'tracy');
     if (matchedUser && !matchedUser.googleEmail) {
       matchedUser.googleEmail = targetEmail;
-      localStorage.setItem('payroll_users_v3', JSON.stringify(state.users));
+      localStorage.setItem('payroll_users_v4', JSON.stringify(state.users));
     }
   }
 
@@ -386,33 +401,57 @@ function renderLoginOptions() {
   const container = document.getElementById('login-user-options');
   if (!container) return;
 
+  const styleConfig = [
+    { bg: 'bg-indigo-50/50', border: 'border-indigo-200', dot: 'bg-indigo-500', textTitle: 'text-slate-800', hover: 'hover:bg-indigo-50' },
+    { bg: 'bg-emerald-50/30', border: 'border-emerald-200', dot: 'bg-emerald-500', textTitle: 'text-slate-800', hover: 'hover:bg-emerald-50' },
+    { bg: 'bg-amber-50/30', border: 'border-amber-200', dot: 'bg-amber-500', textTitle: 'text-slate-800', hover: 'hover:bg-amber-50' }
+  ];
+
   container.innerHTML = '';
   state.users.forEach((u, idx) => {
-    const label = document.createElement('label');
-    label.className = `flex items-center justify-between p-3 rounded-xl border cursor-pointer transition ${idx === 0 ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-200 hover:bg-slate-50'}`;
-    const emailHint = u.googleEmail ? `<p class="text-[10px] text-emerald-600 font-mono">已綁定: ${u.googleEmail}</p>` : `<p class="text-[10px] text-slate-400 font-mono">帳號: ${u.username}</p>`;
+    const config = styleConfig[idx % styleConfig.length];
     
-    label.innerHTML = `
-      <div class="flex items-center gap-3">
-        <input type="radio" name="loginUser" value="${u.username}" ${idx === 0 ? 'checked' : ''} class="w-4 h-4 text-indigo-600 focus:ring-indigo-500">
+    // Determine permissions string based on the Google Sheet
+    let permissionsText = u.canEdit ? '權限：可查看、可編輯' : '權限：僅可查看';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `w-full text-left p-3 rounded-xl border ${config.border} ${config.bg} ${config.hover} transition flex items-center justify-between group`;
+    
+    btn.innerHTML = `
+      <div class="flex items-start gap-3">
+        <div class="mt-1 w-2.5 h-2.5 rounded-full flex-shrink-0 ${config.dot}"></div>
         <div>
-          <p class="text-xs font-bold text-slate-800">${u.name}</p>
-          ${emailHint}
+          <p class="text-[14px] font-bold ${config.textTitle} mb-0.5">${u.name} (${u.role})</p>
+          <p class="text-[11px] text-slate-500">${permissionsText}</p>
         </div>
       </div>
-      <span class="px-2 py-0.5 text-[10px] rounded-full bg-slate-100 font-medium text-slate-600">${u.role}</span>
+      <div class="text-slate-400 group-hover:${config.textTitle.replace('slate-800', config.dot.replace('bg-', 'text-'))} transition-colors">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+      </div>
     `;
-
-    label.addEventListener('click', () => {
-      document.querySelectorAll('#login-user-options label').forEach(l => {
-        l.className = 'flex items-center justify-between p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer transition';
-      });
-      label.className = 'flex items-center justify-between p-3 rounded-xl border border-indigo-500 bg-indigo-50/50 cursor-pointer transition';
-      const radio = label.querySelector('input[type="radio"]');
-      if (radio) radio.checked = true;
+    
+    // Quick login action
+    btn.addEventListener('click', () => {
+      const pwd = prompt(`請輸入 ${u.name} 的登入密碼 (預設: 123456)：`);
+      if (pwd === null) return; // cancelled
+      
+      // We accept 123456 as the fallback password for convenience, or u.password if it was changed
+      if (pwd === u.password || pwd === '123456') {
+        state.currentUser = u;
+        sessionStorage.setItem('payroll_current_user_v3', JSON.stringify(u));
+        document.getElementById('login-modal').classList.add('opacity-0', 'pointer-events-none');
+        setTimeout(() => {
+          document.getElementById('login-modal').classList.add('hidden');
+          updateUI();
+          showToast(`歡迎回來，${u.name}！`, 'success');
+        }, 300);
+      } else {
+        alert('密碼錯誤，請重試！');
+      }
     });
 
-    container.appendChild(label);
+    container.appendChild(btn);
   });
 }
 
@@ -460,19 +499,23 @@ function handleLoginSubmit(e) {
   showToast(`歡迎登入，${matchedUser.name}！`, 'success');
 }
 
-// 登出處理
+// 登出處理 (Firebase signOut)
 function handleLogout() {
   if (confirm('確定要登出系統嗎？')) {
     state.currentUser = null;
     sessionStorage.removeItem('payroll_current_user_v3');
+    sessionStorage.removeItem('firebase_current_user');
 
-    const loginModal = document.getElementById('login-modal');
-    loginModal?.classList.remove('hidden');
-    loginModal?.classList.add('flex');
-
-    updateUserBadgeDisplay();
-    initGoogleAuth();
-    showToast('已安全登出系統', 'info');
+    // Firebase signOut then redirect to auth.html
+    if (typeof firebase !== 'undefined' && firebase.apps.length) {
+      firebase.auth().signOut().then(() => {
+        window.location.replace('./auth.html');
+      }).catch(() => {
+        window.location.replace('./auth.html');
+      });
+    } else {
+      window.location.replace('./auth.html');
+    }
   }
 }
 
@@ -542,7 +585,7 @@ function saveUsersSettings() {
     }
   });
 
-  localStorage.setItem('payroll_users_v3', JSON.stringify(state.users));
+  localStorage.setItem('payroll_users_v4', JSON.stringify(state.users));
 
   // 更新當前人員顯示
   if (state.currentUser) {
@@ -1519,7 +1562,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-reset-default-users')?.addEventListener('click', () => {
     if (confirm('確定要將 3 位人員資料還原為初始設定嗎？')) {
       state.users = JSON.parse(JSON.stringify(DEFAULT_USERS));
-      localStorage.removeItem('payroll_users_v3');
+      localStorage.removeItem('payroll_users_v4');
       renderUserManagementList();
       renderLoginOptions();
       showToast('已恢復預設 3 位人員帳號', 'info');

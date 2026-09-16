@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>廠商工資系統 · 登入</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+  <!-- Firebase SDK (v10 compat) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Noto Sans TC',sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#1a1b3b;background-image:radial-gradient(ellipse at 20% 50%,rgba(90,66,244,.25) 0%,transparent 60%),radial-gradient(ellipse at 80% 20%,rgba(30,150,255,.15) 0%,transparent 55%);padding:16px}
+    .card{background:#fff;border-radius:24px;width:100%;max-width:420px;padding:36px 32px 32px;box-shadow:0 32px 80px rgba(0,0,0,.35)}
+    .screen{display:none}.screen.active{display:block}
+    .logo-wrap{text-align:center;margin-bottom:24px}
+    .logo{width:56px;height:56px;border-radius:16px;background:linear-gradient(135deg,#5942f4,#3b82f6);color:#fff;font-size:22px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;margin-bottom:14px;box-shadow:0 8px 24px rgba(89,66,244,.35)}
+    .logo-wrap h1{font-size:20px;font-weight:900;color:#0f172a;letter-spacing:-.3px}
+    .logo-wrap p{font-size:13px;color:#64748b;margin-top:4px}
+    label.field-label{display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:6px}
+    input[type=email],input[type=password],input[type=text]{width:100%;padding:11px 14px;border:1.5px solid #e2e8f0;border-radius:12px;font-family:inherit;font-size:14px;color:#0f172a;transition:border-color .2s,box-shadow .2s;outline:none;background:#f8fafc}
+    input:focus{border-color:#5942f4;box-shadow:0 0 0 3px rgba(89,66,244,.12);background:#fff}
+    .field-group{margin-bottom:16px}
+    .btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px 16px;border:none;border-radius:12px;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s}
+    .btn:disabled{opacity:.55;cursor:not-allowed}
+    .btn-primary{background:linear-gradient(135deg,#5942f4,#3b82f6);color:#fff;box-shadow:0 4px 14px rgba(89,66,244,.3)}
+    .btn-primary:hover:not(:disabled){box-shadow:0 6px 20px rgba(89,66,244,.4);transform:translateY(-1px)}
+    .btn-google{background:#fff;border:1.5px solid #e2e8f0;color:#1e293b;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+    .btn-google:hover:not(:disabled){background:#f8fafc;border-color:#cbd5e1}
+    .btn-ghost{background:transparent;color:#5942f4;font-size:13px;padding:8px;font-weight:600;border:none;cursor:pointer}
+    .btn-ghost:hover{color:#3b82f6;text-decoration:underline}
+    .divider{display:flex;align-items:center;gap:12px;margin:18px 0;color:#94a3b8;font-size:12px;font-weight:600}
+    .divider::before,.divider::after{content:'';flex:1;height:1px;background:#e2e8f0}
+    .links-row{display:flex;justify-content:space-between;align-items:center;margin-top:18px}
+    .alert{padding:10px 14px;border-radius:10px;font-size:13px;font-weight:500;margin-bottom:16px;display:none;line-height:1.5}
+    .alert.error{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;display:block}
+    .alert.success{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;display:block}
+    .alert.info{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;display:block}
+    .g-icon{width:18px;height:18px;flex-shrink:0}
+    .success-circle{width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-size:32px;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;box-shadow:0 8px 24px rgba(16,185,129,.35)}
+    .user-info{background:#f8fafc;border-radius:12px;padding:14px 16px;margin:16px 0;border:1px solid #e2e8f0}
+    .user-info img{width:40px;height:40px;border-radius:50%;object-fit:cover;margin-right:12px;vertical-align:middle}
+    .user-info .user-name{font-weight:700;font-size:15px;color:#0f172a}
+    .user-info .user-email{font-size:12px;color:#64748b;margin-top:2px}
+    .verified-badge{display:inline-flex;align-items:center;gap:4px;background:#d1fae5;color:#065f46;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;margin-top:4px}
+    .spinner{width:18px;height:18px;border:2.5px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .65s linear infinite;display:none}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .pwd-wrap{position:relative}
+    .pwd-toggle{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#94a3b8;display:flex;padding:0}
+    .pwd-toggle:hover{color:#5942f4}
+  </style>
+</head>
+<body>
+<div class="card">
+
+  <!-- LOGIN -->
+  <div id="screen-login" class="screen active">
+    <div class="logo-wrap">
+      <div class="logo">VP</div>
+      <h1>廠商工資系統</h1>
+      <p>請登入您的帳號以繼續</p>
+    </div>
+    <div id="login-alert" class="alert"></div>
+    <button class="btn btn-google" id="btn-google-login">
+      <svg class="g-icon" viewBox="0 0 24 24"><path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"/><path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"/><path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.97 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/><path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/></svg>
+      使用 Google 帳號登入
+    </button>
+    <div class="divider">或使用電子信箱</div>
+    <div class="field-group">
+      <label class="field-label" for="login-email">電子信箱</label>
+      <input type="email" id="login-email" placeholder="name@example.com" autocomplete="email" />
+    </div>
+    <div class="field-group">
+      <label class="field-label" for="login-pwd">密碼</label>
+      <div class="pwd-wrap">
+        <input type="password" id="login-pwd" placeholder="請輸入密碼" autocomplete="current-password" />
+        <button class="pwd-toggle" data-target="login-pwd" type="button">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+        </button>
+      </div>
+    </div>
+    <button class="btn btn-primary" id="btn-email-login">
+      <span class="spinner" id="login-spinner"></span>
+      <span id="login-btn-text">登入</span>
+    </button>
+    <div class="links-row">
+      <button class="btn btn-ghost" id="link-to-register">註冊帳號</button>
+      <button class="btn btn-ghost" id="link-forgot-pwd">忘記密碼</button>
+    </div>
+  </div>
+
+  <!-- REGISTER -->
+  <div id="screen-register" class="screen">
+    <div class="logo-wrap">
+      <div class="logo" style="background:linear-gradient(135deg,#10b981,#0ea5e9)">VP</div>
+      <h1>建立新帳號</h1>
+      <p>填寫資料完成註冊</p>
+    </div>
+    <div id="register-alert" class="alert"></div>
+    <button class="btn btn-google" id="btn-google-register">
+      <svg class="g-icon" viewBox="0 0 24 24"><path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"/><path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"/><path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.97 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/><path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/></svg>
+      使用 Google 帳號註冊
+    </button>
+    <div class="divider">或使用電子信箱</div>
+    <div class="field-group">
+      <label class="field-label" for="reg-name">姓名（顯示名稱）</label>
+      <input type="text" id="reg-name" placeholder="您的名稱" autocomplete="name" />
+    </div>
+    <div class="field-group">
+      <label class="field-label" for="reg-email">電子信箱</label>
+      <input type="email" id="reg-email" placeholder="name@example.com" autocomplete="email" />
+    </div>
+    <div class="field-group">
+      <label class="field-label" for="reg-pwd">密碼</label>
+      <div class="pwd-wrap">
+        <input type="password" id="reg-pwd" placeholder="至少 6 個字元" autocomplete="new-password" />
+        <button class="pwd-toggle" data-target="reg-pwd" type="button">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="field-group">
+      <label class="field-label" for="reg-pwd2">確認密碼</label>
+      <div class="pwd-wrap">
+        <input type="password" id="reg-pwd2" placeholder="再輸入一次密碼" autocomplete="new-password" />
+        <button class="pwd-toggle" data-target="reg-pwd2" type="button">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+        </button>
+      </div>
+    </div>
+    <button class="btn btn-primary" id="btn-email-register" style="background:linear-gradient(135deg,#10b981,#0ea5e9);box-shadow:0 4px 14px rgba(16,185,129,.3)">
+      <span class="spinner" id="reg-spinner"></span>
+      <span id="reg-btn-text">建立帳號</span>
+    </button>
+    <div style="text-align:center;margin-top:18px">
+      <button class="btn btn-ghost" id="link-to-login">← 返回登入</button>
+    </div>
+  </div>
+
+  <!-- FORGOT PASSWORD -->
+  <div id="screen-forgot" class="screen">
+    <div class="logo-wrap">
+      <div class="logo" style="background:linear-gradient(135deg,#f59e0b,#ef4444)">VP</div>
+      <h1>重設密碼</h1>
+      <p>輸入信箱以接收重設連結</p>
+    </div>
+    <div id="forgot-alert" class="alert"></div>
+    <div class="field-group">
+      <label class="field-label" for="forgot-email">電子信箱</label>
+      <input type="email" id="forgot-email" placeholder="name@example.com" autocomplete="email" />
+    </div>
+    <button class="btn btn-primary" id="btn-send-reset" style="background:linear-gradient(135deg,#f59e0b,#ef4444);box-shadow:0 4px 14px rgba(245,158,11,.3)">
+      <span class="spinner" id="forgot-spinner"></span>
+      <span id="forgot-btn-text">寄送重設密碼信件</span>
+    </button>
+    <div style="text-align:center;margin-top:18px">
+      <button class="btn btn-ghost" id="link-forgot-to-login">← 返回登入</button>
+    </div>
+  </div>
+
+  <!-- VERIFY EMAIL -->
+  <div id="screen-verify" class="screen">
+    <div style="text-align:center;margin-bottom:24px">
+      <div class="logo" style="background:linear-gradient(135deg,#3b82f6,#8b5cf6);font-size:28px">✉️</div>
+      <h1 style="font-size:20px;font-weight:900;color:#0f172a;margin-bottom:6px">確認您的信箱</h1>
+      <p style="font-size:13px;color:#64748b">驗證信已寄送至<br><strong id="verify-email-display" style="color:#5942f4"></strong></p>
+    </div>
+    <div id="verify-alert" class="alert info" style="display:block">📬 請前往信箱點擊驗證連結後，再回來點擊下方按鈕。</div>
+    <button class="btn btn-primary" id="btn-check-verify">
+      <span class="spinner" id="verify-spinner"></span>
+      <span>我已驗證，繼續登入</span>
+    </button>
+    <button class="btn btn-ghost" id="btn-resend-verify" style="margin-top:10px;width:100%;text-align:center">重新寄送驗證信</button>
+    <div style="text-align:center;margin-top:8px">
+      <button class="btn btn-ghost" id="link-verify-to-login">← 返回登入</button>
+    </div>
+  </div>
+
+  <!-- SUCCESS -->
+  <div id="screen-success" class="screen">
+    <div style="text-align:center;margin-bottom:24px">
+      <div class="success-circle">✓</div>
+      <h1 style="font-size:22px;font-weight:900;color:#0f172a;margin-bottom:6px">登入成功！</h1>
+      <p style="font-size:13px;color:#64748b">歡迎回到廠商工資系統</p>
+    </div>
+    <div class="user-info" id="user-info-box">
+      <div style="display:flex;align-items:center">
+        <img id="user-avatar" src="" alt="avatar" />
+        <div>
+          <div class="user-name" id="user-display-name"></div>
+          <div class="user-email" id="user-display-email"></div>
+          <div class="verified-badge" id="user-verified-badge">
+            <svg width="10" height="10" fill="currentColor" viewBox="0 0 20 20"><path d="M16.707 5.293a1 1 0 00-1.414 0L8 12.586 4.707 9.293a1 1 0 00-1.414 1.414l4 4a1 1 0 001.414 0l8-8a1 1 0 000-1.414z"/></svg>
+            信箱已驗證
+          </div>
+        </div>
+      </div>
+    </div>
+    <button class="btn btn-primary" id="btn-go-system" style="margin-top:8px">進入系統 →</button>
+    <button class="btn btn-ghost" id="btn-logout" style="margin-top:10px;width:100%;text-align:center;color:#ef4444">登出</button>
+  </div>
+
+</div>
+
+<script>
+// ── Firebase ──
+const firebaseConfig = {
+  apiKey: "AIzaSyD31bfSapvdtnpQnqLfCRiliF8JU1-XJ-Y",
+  authDomain: "vendor-payroll.firebaseapp.com",
+  projectId: "vendor-payroll",
+  storageBucket: "vendor-payroll.firebasestorage.app",
+  messagingSenderId: "522687415381",
+  appId: "1:522687415381:web:71a0b3d73d967e1aa640dc",
+  measurementId: "G-V0GRGFXGQX"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const googleProvider = new firebase.auth.GoogleAuthProvider();
+
+// ── Screens ──
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-' + id).classList.add('active');
+  clearAllAlerts();
+}
+function clearAllAlerts() {
+  document.querySelectorAll('.alert').forEach(a => { a.className = 'alert'; a.textContent = ''; });
+}
+function showAlert(elId, message, type = 'error') {
+  const el = document.getElementById(elId);
+  el.textContent = message;
+  el.className = 'alert ' + type;
+}
+
+// ── Loading ──
+function setLoading(spinnerId, loading) {
+  const spinner = document.getElementById(spinnerId);
+  if (!spinner) return;
+  spinner.style.display = loading ? 'inline-block' : 'none';
+  const btn = spinner.closest('button');
+  if (btn) btn.disabled = loading;
+}
+
+// ── Navigation ──
+document.getElementById('link-to-register').addEventListener('click', () => showScreen('register'));
+document.getElementById('link-to-login').addEventListener('click', () => showScreen('login'));
+document.getElementById('link-forgot-pwd').addEventListener('click', () => showScreen('forgot'));
+document.getElementById('link-forgot-to-login').addEventListener('click', () => showScreen('login'));
+document.getElementById('link-verify-to-login').addEventListener('click', () => { auth.signOut(); showScreen('login'); });
+
+// ── Error messages (zh-TW) ──
+function friendlyError(code) {
+  const map = {
+    'auth/user-not-found':        '找不到此信箱對應的帳號，請先完成註冊。',
+    'auth/wrong-password':        '密碼錯誤，請再試一次。',
+    'auth/invalid-email':         '信箱格式不正確。',
+    'auth/invalid-credential':    '信箱或密碼錯誤，請重新確認。',
+    'auth/user-disabled':         '此帳號已被停用，請聯絡管理員。',
+    'auth/email-already-in-use':  '此信箱已被使用，請直接登入或重設密碼。',
+    'auth/weak-password':         '密碼強度不足，請使用至少 6 個字元。',
+    'auth/popup-closed-by-user':  'Google 登入視窗已關閉，請重試。',
+    'auth/cancelled-popup-request':'請勿重複點擊登入按鈕。',
+    'auth/popup-blocked':         '登入視窗被封鎖，請允許彈出視窗後重試。',
+    'auth/too-many-requests':     '操作過於頻繁，請稍後再試。',
+    'auth/network-request-failed':'網路連線異常，請確認網路後重試。',
+  };
+  return map[code] || ('發生錯誤：' + code);
+}
+
+// ── Show Success ──
+function showSuccess(user) {
+  document.getElementById('user-display-name').textContent = user.displayName || '使用者';
+  document.getElementById('user-display-email').textContent = user.email;
+  const avatar = document.getElementById('user-avatar');
+  avatar.src = user.photoURL || ('https://ui-avatars.com/api/?background=5942f4&color=fff&name=' + encodeURIComponent((user.displayName || user.email || 'U').charAt(0)) + '&size=80');
+  const badge = document.getElementById('user-verified-badge');
+  if (!user.emailVerified) {
+    badge.textContent = '⚠ 信箱尚未驗證';
+    badge.style.cssText = 'background:#fef9c3;color:#854d0e;display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;margin-top:4px';
+  }
+
+  // Store Firebase user info in sessionStorage for index.html / app.js
+  const stored = {
+    name: user.displayName || user.email.split('@')[0],
+    email: user.email,
+    photoURL: user.photoURL || '',
+    emailVerified: user.emailVerified,
+    uid: user.uid,
+    loginType: 'firebase'
+  };
+  sessionStorage.setItem('firebase_current_user', JSON.stringify(stored));
+
+  showScreen('success');
+}
+
+// ── Auth State ──
+auth.onAuthStateChanged(user => {
+  if (user) {
+    if (!user.emailVerified && user.providerData[0]?.providerId === 'password') {
+      document.getElementById('verify-email-display').textContent = user.email;
+      showScreen('verify');
+    } else {
+      showSuccess(user);
+      // Auto-redirect after 1.5s for smoother UX
+      setTimeout(() => { window.location.replace('./index.html'); }, 1500);
+    }
+  }
+});
+
+// ── Google Login/Register ──
+async function googleSignIn(alertId) {
+  try {
+    await auth.signInWithPopup(googleProvider);
+  } catch (err) {
+    showAlert(alertId, friendlyError(err.code));
+  }
+}
+document.getElementById('btn-google-login').addEventListener('click', () => googleSignIn('login-alert'));
+document.getElementById('btn-google-register').addEventListener('click', () => googleSignIn('register-alert'));
+
+// ── Email Login ──
+document.getElementById('btn-email-login').addEventListener('click', async () => {
+  const email = document.getElementById('login-email').value.trim();
+  const pwd   = document.getElementById('login-pwd').value;
+  if (!email || !pwd) { showAlert('login-alert', '請填寫信箱與密碼。'); return; }
+  setLoading('login-spinner', true);
+  try {
+    await auth.signInWithEmailAndPassword(email, pwd);
+  } catch (err) {
+    showAlert('login-alert', friendlyError(err.code));
+  } finally {
+    setLoading('login-spinner', false);
+  }
+});
+
+// ── Email Register ──
+document.getElementById('btn-email-register').addEventListener('click', async () => {
+  const name  = document.getElementById('reg-name').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const pwd   = document.getElementById('reg-pwd').value;
+  const pwd2  = document.getElementById('reg-pwd2').value;
+  if (!name || !email || !pwd || !pwd2) { showAlert('register-alert', '請填寫所有欄位。'); return; }
+  if (pwd !== pwd2) { showAlert('register-alert', '兩次輸入的密碼不相符。'); return; }
+  if (pwd.length < 6) { showAlert('register-alert', '密碼至少需要 6 個字元。'); return; }
+  setLoading('reg-spinner', true);
+  try {
+    const cred = await auth.createUserWithEmailAndPassword(email, pwd);
+    await cred.user.updateProfile({ displayName: name });
+    await cred.user.sendEmailVerification();
+    document.getElementById('verify-email-display').textContent = email;
+    showScreen('verify');
+  } catch (err) {
+    showAlert('register-alert', friendlyError(err.code));
+  } finally {
+    setLoading('reg-spinner', false);
+  }
+});
+
+// ── Forgot Password ──
+document.getElementById('btn-send-reset').addEventListener('click', async () => {
+  const email = document.getElementById('forgot-email').value.trim();
+  if (!email) { showAlert('forgot-alert', '請輸入您的電子信箱。'); return; }
+  setLoading('forgot-spinner', true);
+  try {
+    await auth.sendPasswordResetEmail(email);
+    showAlert('forgot-alert', '✅ 重設密碼信件已寄送至 ' + email + '，請查收信箱（含垃圾郵件）。', 'success');
+  } catch (err) {
+    showAlert('forgot-alert', friendlyError(err.code));
+  } finally {
+    setLoading('forgot-spinner', false);
+  }
+});
+
+// ── Verify Email ──
+document.getElementById('btn-check-verify').addEventListener('click', async () => {
+  setLoading('verify-spinner', true);
+  try {
+    await auth.currentUser.reload();
+    if (auth.currentUser.emailVerified) {
+      showSuccess(auth.currentUser);
+    } else {
+      showAlert('verify-alert', '信箱尚未完成驗證，請先點擊信件中的連結。', 'error');
+    }
+  } catch (err) {
+    showAlert('verify-alert', friendlyError(err.code));
+  } finally {
+    setLoading('verify-spinner', false);
+  }
+});
+document.getElementById('btn-resend-verify').addEventListener('click', async () => {
+  try {
+    await auth.currentUser.sendEmailVerification();
+    showAlert('verify-alert', '✅ 驗證信已重新寄送，請查收信箱。', 'success');
+  } catch (err) {
+    showAlert('verify-alert', friendlyError(err.code));
+  }
+});
+
+// ── Logout & Go system ──
+document.getElementById('btn-logout').addEventListener('click', async () => { await auth.signOut(); showScreen('login'); });
+document.getElementById('btn-go-system').addEventListener('click', () => { window.location.replace('./index.html'); });
+
+// ── Password toggle ──
+document.querySelectorAll('.pwd-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const input = document.getElementById(btn.dataset.target);
+    const isHidden = input.type === 'password';
+    input.type = isHidden ? 'text' : 'password';
+    const svg = btn.querySelector('svg');
+    svg.innerHTML = isHidden
+      ? '<path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>'
+      : '<path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>';
+  });
+});
+
+// ── Enter key shortcuts ──
+['login-email','login-pwd'].forEach(id => document.getElementById(id).addEventListener('keydown', e => { if (e.key==='Enter') document.getElementById('btn-email-login').click(); }));
+['reg-name','reg-email','reg-pwd','reg-pwd2'].forEach(id => document.getElementById(id).addEventListener('keydown', e => { if (e.key==='Enter') document.getElementById('btn-email-register').click(); }));
+document.getElementById('forgot-email').addEventListener('keydown', e => { if (e.key==='Enter') document.getElementById('btn-send-reset').click(); });
+</script>
+</body>
+</html>
